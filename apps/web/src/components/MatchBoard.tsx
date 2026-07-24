@@ -14,7 +14,7 @@ import type {
 import { Pitch } from './Pitch';
 import { WhatIfPanel } from './WhatIfPanel';
 import { SquadPanel } from './SquadPanel';
-import { useFramePlayback } from './useFramePlayback';
+import { PLAYBACK_TRANSITION_MS, SPEED_OPTIONS, useFramePlayback } from './useFramePlayback';
 
 interface MatchBoardProps {
   match: MatchDetail;
@@ -264,7 +264,7 @@ export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
         ) : (
           <>
             <div className="relative">
-              <Pitch tokens={replay.tokens} smooth smoothMs={1000 / replay.speed} />
+              <Pitch tokens={replay.tokens} smooth smoothMs={PLAYBACK_TRANSITION_MS} />
               {bannerContent && (
                 <div className="pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-sm font-semibold whitespace-nowrap text-white shadow-lg">
                   {bannerContent.icon} {bannerContent.text}
@@ -282,12 +282,12 @@ export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
                 </button>
                 <input
                   type="range"
-                  min={0}
-                  max={Math.max(activeFrames.length - 1, 0)}
-                  value={replay.idx}
+                  min={replay.firstT}
+                  max={replay.lastT}
+                  value={replay.t}
                   onChange={(e) => {
                     replay.setPlaying(false);
-                    replay.setIdx(Number(e.target.value));
+                    replay.setT(Number(e.target.value));
                   }}
                   className="flex-1 accent-emerald-500"
                 />
@@ -296,9 +296,11 @@ export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
                   onChange={(e) => replay.setSpeed(Number(e.target.value))}
                   className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
                 >
-                  <option value={1}>1x</option>
-                  <option value={4}>4x</option>
-                  <option value={10}>10x</option>
+                  {SPEED_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}x
+                    </option>
+                  ))}
                 </select>
               </div>
               <p className="mt-2 text-xs text-neutral-500">

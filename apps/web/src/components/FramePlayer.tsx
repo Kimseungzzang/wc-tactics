@@ -2,7 +2,7 @@
 
 import type { MatchDetail, MatchFrame } from '@/lib/types';
 import { Pitch } from './Pitch';
-import { useFramePlayback } from './useFramePlayback';
+import { PLAYBACK_TRANSITION_MS, SPEED_OPTIONS, useFramePlayback } from './useFramePlayback';
 
 interface FramePlayerProps {
   frames: MatchFrame[];
@@ -11,14 +11,14 @@ interface FramePlayerProps {
 }
 
 export function FramePlayer({ frames, match, autoPlay }: FramePlayerProps) {
-  const { idx, setIdx, playing, setPlaying, speed, setSpeed, current, tokens } =
+  const { t, setT, firstT, lastT, playing, setPlaying, speed, setSpeed, current, tokens } =
     useFramePlayback(frames, match, autoPlay);
 
   if (!current) return null;
 
   return (
     <>
-      <Pitch tokens={tokens} smooth smoothMs={1000 / speed} />
+      <Pitch tokens={tokens} smooth smoothMs={PLAYBACK_TRANSITION_MS} />
       <div className="mt-3 flex items-center gap-3">
         <button
           type="button"
@@ -29,12 +29,12 @@ export function FramePlayer({ frames, match, autoPlay }: FramePlayerProps) {
         </button>
         <input
           type="range"
-          min={0}
-          max={frames.length - 1}
-          value={idx}
+          min={firstT}
+          max={lastT}
+          value={t}
           onChange={(e) => {
             setPlaying(false);
-            setIdx(Number(e.target.value));
+            setT(Number(e.target.value));
           }}
           className="flex-1 accent-emerald-500"
         />
@@ -46,9 +46,11 @@ export function FramePlayer({ frames, match, autoPlay }: FramePlayerProps) {
           onChange={(e) => setSpeed(Number(e.target.value))}
           className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
         >
-          <option value={1}>1x</option>
-          <option value={4}>4x</option>
-          <option value={10}>10x</option>
+          {SPEED_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {s}x
+            </option>
+          ))}
         </select>
       </div>
     </>

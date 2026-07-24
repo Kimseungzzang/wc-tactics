@@ -1,0 +1,176 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// StatsBomb team_id
+model Team {
+  id   Int    @id
+  name String
+
+  homeMatches Match[]       @relation("HomeTeam")
+  awayMatches Match[]       @relation("AwayTeam")
+  squadEntries MatchSquad[]
+  events       MatchEvent[]
+  snapshots    MatchSnapshot[]
+}
+
+// StatsBomb player_id
+model Player {
+  id   Int    @id
+  name String
+
+  squadEntries MatchSquad[]
+}
+
+// StatsBomb match_id
+model Match {
+  id              Int      @id
+  matchDate       String
+  kickOff         String
+  stadiumName     String?
+  competitionStage String?
+  matchWeek       Int?
+  homeManagerName String?
+  awayManagerName String?
+  refereeName     String?
+
+  homeTeamId Int
+  homeTeam   Team @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeamId Int
+  awayTeam   Team @relation("AwayTeam", fields: [awayTeamId], references: [id])
+
+  homeScore Int
+  awayScore Int
+
+  squad      MatchSquad[]
+  events     MatchEvent[]
+  snapshots  MatchSnapshot[]
+  ballEvents MatchBallEvent[]
+  frames     MatchFrame[]
+}
+
+// Full squad (starters + bench) per team per match, from lineups/{id}.json
+model MatchSquad {
+  id            String  @id @default(cuid())
+  matchId       Int
+  match         Match   @relation(fields: [matchId], references: [id])
+  teamId        Int
+  team          Team    @relation(fields: [teamId], references: [id])
+  playerId      Int
+  player        Player  @relation(fields: [playerId], references: [id])
+  jerseyNumber  Int?
+  isStarter     Boolean @default(false)
+
+  @@unique([matchId, playerId])
+  @@index([matchId, teamId])
+}
+
+enum MatchEventType {
+  STARTING_XI
+  TACTICAL_SHIFT
+  SUBSTITUTION
+  GOAL
+  OWN_GOAL
+  CARD
+  HALF_END
+}
+
+// Filtered, timeline-relevant events only (goals/cards/subs/tactical shifts),
+// derived from events/{id}.json. Full StatsBomb event stream is not persisted.
+model MatchEvent {
+  id        String         @id
+  matchId   Int
+  match     Match          @relation(fields: [matchId], references: [id])
+  teamId    Int?
+  team      Team?          @relation(fields: [teamId], references: [id])
+  type      MatchEventType
+  period    Int
+  minute    Int
+  second    Int
+  // Type-specific details as JSON, e.g.
+  // SUBSTITUTION: { outPlayerId, outName, inPlayerId, inName, positionId, positionName }
+  // GOAL/OWN_GOAL: { playerId, name, xg }
+  // CARD: { playerId, name, cardType }
+  payload   String
+
+  @@index([matchId, minute, second])
+}
+
+// Precomputed "who was on the pitch, in what formation" for a team at a point
+// in time, one row per STARTING_XI / TACTICAL_SHIFT / SUBSTITUTION event.
+// Querying the latest row with minute/second <= target gives the state at
+// any moment without replaying events at request time.
+model MatchSnapshot {
+  id        String @id @default(cuid())
+  matchId   Int
+  match     Match  @relation(fields: [matchId], references: [id])
+  teamId    Int
+  team      Team   @relation(fields: [teamId], references: [id])
+  minute    Int
+  second    Int
+  formation String
+  // JSON array of 11 { playerId, name, jerseyNumber, positionId, positionName }
+  lineup    String
+
+  @@index([matchId, teamId, minute, second])
+}
+
+// Real, unfiltered ball-involved events (Pass/Carry/Shot/Duel/...) with
+// StatsBomb pitch coordinates (0-120 x 0-80). This is the ground truth used
+// to drive the ball's path in the frame simulator - never fabricated.
+model MatchBallEvent {
+  id              String  @id
+  matchId         Int
+  match           Match   @relation(fields: [matchId], references: [id])
+  teamId          Int
+  type            String
+  period          Int
+  minute          Int
+  second          Int
+  duration        Float
+  playerId        Int?
+  playerName      String?
+  recipientId     Int?
+  recipientName   String?
+  x               Float
+  y               Float
+  endX            Float?
+  endY            Float?
+  outcome         String?
+
+  @@index([matchId, minute, second])
+}
+
+// Simulated per-second game state for match replay/what-if playback.
+// Ball position is derived from real MatchBallEvent coordinates
+// (interpolated within each event's real duration). The 21 off-ball
+// players' positions are NOT real tracking data - they are computed by a
+// deterministic team-shape simulation (formation slot + reaction to ball
+// position), an explicitly-allowed constructed/dummy layer per contest
+// rules. Frontend plays these back as keyframes with CSS-transition
+// interpolation between them.
+model MatchFrame {
+  id      String @id @default(cuid())
+  matchId Int
+  match   Match  @relation(fields: [matchId], references: [id])
+  // Continuous seconds since kickoff (see src/lib/match-clock.ts) - the
+  // authoritative ordering key, since raw minute/second overlaps at
+  // period boundaries.
+  t       Float
+  period  Int
+  minute  Int
+  second  Int
+  ballX   Float
+  ballY   Float
+  // JSON array of 22 { playerId, teamId, x, y }
+  players String
+
+  @@index([matchId, t])
+}

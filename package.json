@@ -1,0 +1,9 @@
+{
+  "name": "wc-tactics",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  }
+}

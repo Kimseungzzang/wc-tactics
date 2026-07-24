@@ -20,7 +20,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed": "tsx scripts/seed-statsbomb.ts",
     "seed:ball-events": "tsx scripts/seed-ball-events.ts",
-    "seed:frames": "tsx scripts/simulate-frames.ts"
+    "seed:frames": "tsx scripts/simulate-frames.ts",
+    "generate:attributes": "tsx scripts/generate-attributes.ts"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",

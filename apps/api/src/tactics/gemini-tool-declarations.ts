@@ -65,4 +65,28 @@ export const TACTICS_TOOL_DECLARATIONS: FunctionDeclaration[] = [
       required: ['teamId'],
     },
   },
+  {
+    name: 'get_player_attributes',
+    description:
+      '한 선수의 능력치(속도/슈팅/패스/수비/피지컬/체력, 1-99)를 조회합니다. 교체·전술 선택의 근거로 사용하세요.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        playerId: { type: Type.INTEGER },
+      },
+      required: ['playerId'],
+    },
+  },
+  {
+    name: 'get_team_tactical_profile',
+    description:
+      '한 팀의 전술 성향(압박강도/점유성향/수비라인 높이, 0-100)을 조회합니다.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        teamId: { type: Type.INTEGER },
+      },
+      required: ['teamId'],
+    },
+  },
 ];

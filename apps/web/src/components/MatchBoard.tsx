@@ -11,6 +11,7 @@ import type {
 } from '@/lib/types';
 import { Pitch, type PitchToken } from './Pitch';
 import { Timeline } from './Timeline';
+import { WhatIfPanel } from './WhatIfPanel';
 
 interface MatchBoardProps {
   match: MatchDetail;
@@ -283,6 +284,23 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
             )}
           </div>
         )}
+
+        <WhatIfPanel
+          match={match}
+          minute={minute}
+          teamId={managedTeamId}
+          proposedChange={
+            ai.result && ai.result.substitutions.length > 0
+              ? {
+                  formation: ai.result.recommendedFormation ?? undefined,
+                  substitutions: ai.result.substitutions.map((s) => ({
+                    outPlayerId: s.outPlayerId,
+                    inPlayerId: s.inPlayerId,
+                  })),
+                }
+              : undefined
+          }
+        />
       </aside>
     </div>
   );

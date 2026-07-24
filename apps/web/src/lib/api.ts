@@ -6,6 +6,7 @@ import type {
   PositionCoordinate,
   RecommendTacticsRequest,
   TacticsRecommendation,
+  WhatIfScenarioResponse,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
@@ -54,6 +55,16 @@ export function recommendTactics(
 ): Promise<TacticsRecommendation> {
   return apiFetch<TacticsRecommendation>(
     `/matches/${matchId}/tactics/recommend`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}
+
+export function generateWhatIf(
+  matchId: number,
+  body: RecommendTacticsRequest,
+): Promise<WhatIfScenarioResponse> {
+  return apiFetch<WhatIfScenarioResponse>(
+    `/matches/${matchId}/tactics/what-if`,
     { method: 'POST', body: JSON.stringify(body) },
   );
 }

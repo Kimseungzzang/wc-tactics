@@ -197,4 +197,43 @@ export class TacticsToolsService {
       formationsUsed: Object.fromEntries(formationCounts),
     };
   }
+
+  async getPlayerAttributes(playerId: number) {
+    const [player, attributes] = await Promise.all([
+      this.prisma.player.findUnique({ where: { id: playerId } }),
+      this.prisma.playerAttributes.findUnique({ where: { playerId } }),
+    ]);
+    if (!player) throw new NotFoundException(`Player not found: id=${playerId}`);
+    if (!attributes) {
+      return { playerId, name: player.name, attributes: null };
+    }
+    return {
+      playerId,
+      name: player.name,
+      pace: attributes.pace,
+      shooting: attributes.shooting,
+      passing: attributes.passing,
+      defending: attributes.defending,
+      physical: attributes.physical,
+      stamina: attributes.stamina,
+    };
+  }
+
+  async getTeamTacticalProfile(teamId: number) {
+    const [team, profile] = await Promise.all([
+      this.prisma.team.findUnique({ where: { id: teamId } }),
+      this.prisma.teamTacticalProfile.findUnique({ where: { teamId } }),
+    ]);
+    if (!team) throw new NotFoundException(`Team not found: id=${teamId}`);
+    if (!profile) {
+      return { teamId, teamName: team.name, profile: null };
+    }
+    return {
+      teamId,
+      teamName: team.name,
+      pressingIntensity: profile.pressingIntensity,
+      possessionStyle: profile.possessionStyle,
+      defensiveLine: profile.defensiveLine,
+    };
+  }
 }

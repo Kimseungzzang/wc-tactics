@@ -19,6 +19,7 @@ model Team {
   squadEntries MatchSquad[]
   events       MatchEvent[]
   snapshots    MatchSnapshot[]
+  tacticalProfile TeamTacticalProfile?
 }
 
 // StatsBomb player_id
@@ -27,6 +28,34 @@ model Player {
   name String
 
   squadEntries MatchSquad[]
+  attributes   PlayerAttributes?
+}
+
+// Constructed/mock FIFA-style ratings (1-99), NOT derived from real
+// aggregate stats. Deterministically generated per player (seeded by
+// playerId) with a base range from their most common real position -
+// explicitly allowed as "구성 데이터" per contest rules. Used by the AI
+// what-if generator (Gemini tool calls) and by the frame simulator's
+// team-shape heuristic (e.g. pace/stamina could later modulate pull).
+model PlayerAttributes {
+  playerId  Int    @id
+  player    Player @relation(fields: [playerId], references: [id])
+  pace      Int
+  shooting  Int
+  passing   Int
+  defending Int
+  physical  Int
+  stamina   Int
+}
+
+// Constructed/mock team playing-style parameters (0-100), seeded by
+// teamId. Feeds the AI what-if generator's tactical reasoning.
+model TeamTacticalProfile {
+  teamId             Int  @id
+  team               Team @relation(fields: [teamId], references: [id])
+  pressingIntensity  Int
+  possessionStyle    Int
+  defensiveLine      Int
 }
 
 // StatsBomb match_id
@@ -49,11 +78,12 @@ model Match {
   homeScore Int
   awayScore Int
 
-  squad      MatchSquad[]
-  events     MatchEvent[]
-  snapshots  MatchSnapshot[]
-  ballEvents MatchBallEvent[]
-  frames     MatchFrame[]
+  squad        MatchSquad[]
+  events       MatchEvent[]
+  snapshots    MatchSnapshot[]
+  ballEvents   MatchBallEvent[]
+  playerEvents MatchPlayerEvent[]
+  frames       MatchFrame[]
 }
 
 // Full squad (starters + bench) per team per match, from lineups/{id}.json
@@ -148,14 +178,42 @@ model MatchBallEvent {
   @@index([matchId, minute, second])
 }
 
-// Simulated per-second game state for match replay/what-if playback.
-// Ball position is derived from real MatchBallEvent coordinates
-// (interpolated within each event's real duration). The 21 off-ball
-// players' positions are NOT real tracking data - they are computed by a
-// deterministic team-shape simulation (formation slot + reaction to ball
-// position), an explicitly-allowed constructed/dummy layer per contest
-// rules. Frontend plays these back as keyframes with CSS-transition
-// interpolation between them.
+enum PlayerEventType {
+  HOME    // holding formation shape, negligible movement
+  SUPPORT // teammate of the ball-possessing team shifting toward the ball
+  PRESS   // opponent closing down the ball
+}
+
+// Discrete, per-player movement segments - one per player per real
+// MatchBallEvent, mirroring how the ball itself moves from event to event.
+// fromX/Y -> toX/Y is NOT real tracking data (see MatchFrame doc below);
+// it is a constructed/dummy movement decision computed from the team-shape
+// heuristic, persisted as an inspectable event rather than a bare formula
+// so the same representation can later be produced by the AI what-if
+// generator (real events and AI-generated events both become rows here).
+model MatchPlayerEvent {
+  id                 String          @id @default(cuid())
+  matchId            Int
+  match              Match           @relation(fields: [matchId], references: [id])
+  playerId           Int
+  teamId             Int
+  type               PlayerEventType
+  t                  Float
+  endT               Float
+  fromX              Float
+  fromY              Float
+  toX                Float
+  toY                Float
+  triggerBallEventId String?
+
+  @@index([matchId, playerId, t])
+}
+
+// Simulated per-second game state for match replay/what-if playback,
+// derived by interpolating MatchBallEvent (ball) and MatchPlayerEvent
+// (players) at each second. The 21 off-ball players' positions are NOT
+// real tracking data - see MatchPlayerEvent doc. Frontend plays these
+// back as keyframes with CSS-transition interpolation between them.
 model MatchFrame {
   id      String @id @default(cuid())
   matchId Int

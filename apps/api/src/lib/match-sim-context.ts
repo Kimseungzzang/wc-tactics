@@ -39,6 +39,7 @@ export async function buildMatchSimContext(
       return {
         id: e.id,
         teamId: e.teamId,
+        type: e.type,
         period: e.period,
         minute: e.minute,
         second: e.second,
@@ -49,6 +50,8 @@ export async function buildMatchSimContext(
         endY: e.endY,
         contStart,
         contEnd: contStart + Math.max(e.duration, 0.1),
+        playerId: e.playerId,
+        recipientId: e.recipientId,
       };
     })
     .sort((a, b) => a.contStart - b.contStart);

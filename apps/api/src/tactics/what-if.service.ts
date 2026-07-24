@@ -32,16 +32,25 @@ function applySubstitutions(
 }
 
 /** Deterministically maps AI-generated high-level moments to pitch coordinates,
- * so the LLM only has to decide who/what/when/outcome - never raw x/y. */
+ * so the LLM only has to decide who/what/when/outcome - never raw x/y.
+ * Each moment's acting player is given a real start->end run (previous ball
+ * spot -> newly resolved spot) rather than a bare point, so the moment's
+ * playerId in team-shape-simulator.ts is grounded exactly like a real
+ * MatchBallEvent's Carry - one player visibly moves the ball, not just the
+ * ball dot in isolation. */
 function momentsToBallEvents(
   moments: WhatIfMoment[],
   rollbackT: number,
   rollbackMinute: number,
   rollbackPeriod: number,
+  startX: number,
+  startY: number,
   attackDirection: (teamId: number, period: number) => 1 | -1,
 ): SimBallEvent[] {
   const progress = new Map<number, number>();
   const events: SimBallEvent[] = [];
+  let lastX = startX;
+  let lastY = startY;
 
   moments.forEach((m, idx) => {
     const dir = attackDirection(m.teamId, rollbackPeriod);
@@ -65,8 +74,8 @@ function momentsToBallEvents(
     }
     progress.set(m.teamId, p);
 
-    const x = dir === 1 ? p * PITCH_LENGTH : PITCH_LENGTH - p * PITCH_LENGTH;
-    const y = clamp(40 + 14 * Math.sin((idx + 1) * 1.7), 8, PITCH_WIDTH - 8);
+    const endX = dir === 1 ? p * PITCH_LENGTH : PITCH_LENGTH - p * PITCH_LENGTH;
+    const endY = clamp(40 + 14 * Math.sin((idx + 1) * 1.7), 8, PITCH_WIDTH - 8);
     const offsetSeconds = Math.max(0, m.offsetSeconds);
     const contStart = rollbackT + offsetSeconds;
     const duration = m.type === 'SHOT' ? 1.5 : 4;
@@ -74,17 +83,23 @@ function momentsToBallEvents(
     events.push({
       id: `whatif-${idx}`,
       teamId: m.teamId,
+      type: 'Carry',
       period: rollbackPeriod,
       minute: rollbackMinute + Math.floor(offsetSeconds / 60),
       second: Math.floor(offsetSeconds % 60),
       duration,
-      x,
-      y,
-      endX: null,
-      endY: null,
+      x: lastX,
+      y: lastY,
+      endX,
+      endY,
       contStart,
       contEnd: contStart + duration,
+      playerId: m.playerId,
+      recipientId: null,
     });
+
+    lastX = endX;
+    lastY = endY;
   });
 
   return events;
@@ -116,10 +131,14 @@ export class WhatIfService {
     // overlaps across periods - see match-clock.ts).
     let rollbackPeriod = 1;
     let rollbackT = 0;
+    let rollbackX = 60;
+    let rollbackY = 40;
     for (const e of ctx.ballEvents) {
       if (e.minute <= dto.minute) {
         rollbackPeriod = e.period;
         rollbackT = e.contStart;
+        rollbackX = e.endX ?? e.x;
+        rollbackY = e.endY ?? e.y;
       }
     }
 
@@ -137,6 +156,8 @@ export class WhatIfService {
       rollbackT,
       dto.minute,
       rollbackPeriod,
+      rollbackX,
+      rollbackY,
       ctx.attackDirection,
     );
 

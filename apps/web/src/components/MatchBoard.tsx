@@ -1,40 +1,26 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getFrames, getSnapshot, recommendTactics } from '@/lib/api';
 import type {
   MatchDetail,
   MatchFrame,
   MatchSnapshotResponse,
-  PositionCoordinate,
   SnapshotPlayer,
   TacticsRecommendation,
+  WhatIfMoment,
 } from '@/lib/types';
-import { Pitch, type PitchToken } from './Pitch';
-import { Timeline } from './Timeline';
+import { Pitch } from './Pitch';
 import { WhatIfPanel } from './WhatIfPanel';
 import { SquadPanel } from './SquadPanel';
 import { useFramePlayback } from './useFramePlayback';
 
 interface MatchBoardProps {
   match: MatchDetail;
-  positions: PositionCoordinate[];
   initialSnapshot: MatchSnapshotResponse;
 }
 
-function computeMaxMinute(match: MatchDetail): number {
-  const halfEnds = match.timeline
-    .filter((e) => e.type === 'HALF_END')
-    .map((e) => e.minute);
-  return halfEnds.length > 0 ? Math.max(...halfEnds, 90) : 90;
-}
-
-export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProps) {
-  const maxMinute = useMemo(() => computeMaxMinute(match), [match]);
-  const positionById = useMemo(
-    () => new Map(positions.map((p) => [p.id, p])),
-    [positions],
-  );
+export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
   const jerseyByPlayer = useMemo(() => {
     const map = new Map<number, number>();
     for (const list of Object.values(match.squads)) {
@@ -50,30 +36,24 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
     return map;
   }, [match.squads]);
 
-  const [minute, setMinute] = useState(initialSnapshot.minute);
-  const [snapshot, setSnapshot] = useState<MatchSnapshotResponse>(initialSnapshot);
   const [managedTeamId, setManagedTeamId] = useState(match.homeTeam.id);
-  const [positionOverrides, setPositionOverrides] = useState<
-    Record<number, { x: number; y: number }>
-  >({});
-  const [lineupOverride, setLineupOverride] = useState<SnapshotPlayer[] | null>(
-    null,
-  );
+  const [snapshot, setSnapshot] = useState<MatchSnapshotResponse>(initialSnapshot);
+  const [lineupOverride, setLineupOverride] = useState<SnapshotPlayer[] | null>(null);
   const [manualSubstitutions, setManualSubstitutions] = useState<
     { outPlayerId: number; inPlayerId: number }[]
   >([]);
-  const [selectedFormation, setSelectedFormation] = useState<string | undefined>(
-    undefined,
-  );
+  const [selectedFormation, setSelectedFormation] = useState<string | undefined>(undefined);
   const [ai, setAi] = useState<{
     loading: boolean;
     result: TacticsRecommendation | null;
     error: string | null;
   }>({ loading: false, result: null, error: null });
+  const [whatIf, setWhatIf] = useState<{
+    frames: MatchFrame[];
+    summary: string;
+    moments: WhatIfMoment[];
+  } | null>(null);
 
-  const [viewMode, setViewMode] = useState<'snapshot' | 'replay'>('snapshot');
-  // Stable [] reference until real frames arrive, so useFramePlayback's
-  // render-time reset (keyed on array identity) doesn't loop.
   const [matchFrames, setMatchFrames] = useState<MatchFrame[]>([]);
   const [framesLoading, setFramesLoading] = useState(true);
   useEffect(() => {
@@ -92,69 +72,40 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
       cancelled = true;
     };
   }, [match.id]);
-  const replay = useFramePlayback(matchFrames, match);
+
+  // Once the user diverges from reality (applies a substitution/formation
+  // change, or an AI what-if scenario is active), stop syncing the
+  // real-match snapshot - the squad panel reflects the roster at the
+  // moment of divergence, and the pitch itself switches to AI frames.
+  const diverged = manualSubstitutions.length > 0 || !!selectedFormation || !!whatIf;
+  const activeFrames = whatIf ? whatIf.frames : matchFrames;
   const hasReplayData = matchFrames.length > 0;
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const replay = useFramePlayback(activeFrames, match, false);
+  const currentMinute = Math.floor(replay.current?.minute ?? initialSnapshot.minute);
+
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      const snap = await getSnapshot(match.id, minute);
-      setSnapshot(snap);
-      setPositionOverrides({});
-      setLineupOverride(null);
-      setManualSubstitutions([]);
-      setSelectedFormation(undefined);
-      setAi({ loading: false, result: null, error: null });
-    }, 120);
+    if (diverged) return;
+    let cancelled = false;
+    getSnapshot(match.id, currentMinute).then((snap) => {
+      if (!cancelled) setSnapshot(snap);
+    });
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      cancelled = true;
     };
-  }, [minute, match.id]);
-
-  const tokens: PitchToken[] = useMemo(() => {
-    const result: PitchToken[] = [];
-    const sides: Array<['home' | 'away', typeof snapshot.home]> = [
-      ['home', snapshot.home],
-      ['away', snapshot.away],
-    ];
-    for (const [side, team] of sides) {
-      if (!team) continue;
-      const isManaged = team.teamId === managedTeamId;
-      const lineup = isManaged && lineupOverride ? lineupOverride : team.lineup;
-      for (const p of lineup) {
-        const coord = positionById.get(p.positionId);
-        const baseX = coord?.x ?? 50;
-        const baseY = coord?.y ?? 50;
-        const displayX = side === 'away' ? 100 - baseX : baseX;
-        const override = positionOverrides[p.playerId];
-        result.push({
-          key: `${side}-${p.playerId}`,
-          playerId: p.playerId,
-          name: p.name.split(' ').slice(-1)[0],
-          jerseyNumber: p.jerseyNumber,
-          x: override?.x ?? displayX,
-          y: override?.y ?? baseY,
-          side,
-          draggable: isManaged,
-        });
-      }
-    }
-    return result;
-  }, [snapshot, positionById, positionOverrides, lineupOverride, managedTeamId]);
-
-  const handleMove = (playerId: number, x: number, y: number) => {
-    setPositionOverrides((prev) => ({ ...prev, [playerId]: { x, y } }));
-  };
+  }, [currentMinute, diverged, match.id]);
 
   const managedSnapshot =
     snapshot.home?.teamId === managedTeamId ? snapshot.home : snapshot.away;
+  const managedTeamName =
+    managedTeamId === match.homeTeam.id ? match.homeTeam.name : match.awayTeam.name;
+  const managedLineup = lineupOverride ?? managedSnapshot?.lineup ?? [];
 
   const handleRecommend = async () => {
     setAi({ loading: true, result: null, error: null });
     try {
       const result = await recommendTactics(match.id, {
-        minute,
+        minute: currentMinute,
         teamId: managedTeamId,
         proposedChange,
       });
@@ -176,24 +127,22 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
     const inJersey = jerseyByPlayer.get(inPlayerId) ?? 0;
     const next = base.map((p) =>
       p.playerId === outPlayerId
-        ? {
-            ...p,
-            playerId: inPlayerId,
-            name: inName,
-            jerseyNumber: inJersey,
-          }
+        ? { ...p, playerId: inPlayerId, name: inName, jerseyNumber: inJersey }
         : p,
     );
     setLineupOverride(next);
-    setPositionOverrides((prev) => {
-      const rest = { ...prev };
-      delete rest[outPlayerId];
-      return rest;
-    });
     setManualSubstitutions((prev) => [
       ...prev.filter((s) => s.outPlayerId !== outPlayerId),
       { outPlayerId, inPlayerId },
     ]);
+  };
+
+  const resetChanges = () => {
+    setLineupOverride(null);
+    setManualSubstitutions([]);
+    setSelectedFormation(undefined);
+    setWhatIf(null);
+    setAi({ loading: false, result: null, error: null });
   };
 
   const proposedChange =
@@ -205,19 +154,15 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
       : undefined;
 
   const cardsSoFar = match.timeline.filter(
-    (e) => e.type === 'CARD' && e.minute <= minute,
+    (e) => e.type === 'CARD' && e.minute <= currentMinute,
   );
   const goalsSoFar = match.timeline.filter(
-    (e) => (e.type === 'GOAL' || e.type === 'OWN_GOAL') && e.minute <= minute,
+    (e) => (e.type === 'GOAL' || e.type === 'OWN_GOAL') && e.minute <= currentMinute,
   );
   const scoreAtMinute = {
     home: goalsSoFar.filter((e) => e.teamId === match.homeTeam.id).length,
     away: goalsSoFar.filter((e) => e.teamId === match.awayTeam.id).length,
   };
-
-  const managedTeamName =
-    managedTeamId === match.homeTeam.id ? match.homeTeam.name : match.awayTeam.name;
-  const managedLineup = lineupOverride ?? managedSnapshot?.lineup ?? [];
 
   return (
     <div className="grid flex-1 grid-cols-1 gap-6 p-6 lg:grid-cols-[280px_1fr_360px]">
@@ -245,9 +190,8 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
               {scoreAtMinute.home} - {scoreAtMinute.away}
             </div>
             <div className="text-xs text-neutral-500">
-              {viewMode === 'snapshot'
-                ? `${minute}' 시점`
-                : `${replay.current?.minute ?? minute}'${String(replay.current?.second ?? 0).padStart(2, '0')} 재생 중`}
+              {currentMinute}&apos;{String(replay.current?.second ?? 0).padStart(2, '0')}
+              {whatIf ? ' · AI 시뮬레이션 재생 중' : ' · 실제 경기 재생 중'}
             </div>
           </div>
           <TeamHeader
@@ -259,88 +203,55 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
           />
         </div>
 
-        <div className="mb-3 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setViewMode('snapshot')}
-            className={`rounded px-3 py-1.5 text-xs font-semibold ${
-              viewMode === 'snapshot'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-            }`}
-          >
-            포메이션 스냅샷 (감독 모드)
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('replay')}
-            disabled={!hasReplayData}
-            className={`rounded px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
-              viewMode === 'replay'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-            }`}
-          >
-            {framesLoading
-              ? '재생 데이터 불러오는 중...'
-              : hasReplayData
-                ? '실제 경기 재생'
-                : '실제 경기 재생 (이 경기는 미지원)'}
-          </button>
-        </div>
-
-        <Pitch
-          tokens={viewMode === 'replay' ? replay.tokens : tokens}
-          onMove={viewMode === 'snapshot' ? handleMove : undefined}
-          smooth={viewMode === 'replay'}
-          smoothMs={1000 / replay.speed}
-        />
-
-        {viewMode === 'snapshot' ? (
-          <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
-            <Timeline
-              minute={minute}
-              maxMinute={maxMinute}
-              events={match.timeline}
-              onChange={setMinute}
-            />
+        {framesLoading ? (
+          <div className="flex aspect-[3/2] w-full items-center justify-center rounded-xl border border-neutral-800 bg-neutral-900 text-sm text-neutral-500">
+            재생 데이터 불러오는 중...
+          </div>
+        ) : !hasReplayData ? (
+          <div className="flex aspect-[3/2] w-full items-center justify-center rounded-xl border border-neutral-800 bg-neutral-900 text-sm text-neutral-500">
+            이 경기는 재생 데이터가 아직 없습니다.
           </div>
         ) : (
-          <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
-            <p className="mb-2 text-xs text-neutral-500">
-              공의 실제 좌표는 StatsBomb 데이터, 나머지 선수 움직임은 포메이션 기반으로
-              구성한 시각화입니다.
-            </p>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => replay.setPlaying((p) => !p)}
-                className="shrink-0 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-              >
-                {replay.playing ? '일시정지' : '재생'}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={Math.max(matchFrames.length - 1, 0)}
-                value={replay.idx}
-                onChange={(e) => {
-                  replay.setPlaying(false);
-                  replay.setIdx(Number(e.target.value));
-                }}
-                className="flex-1 accent-emerald-500"
-              />
-              <select
-                value={replay.speed}
-                onChange={(e) => replay.setSpeed(Number(e.target.value))}
-                className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
-              >
-                <option value={1}>1x</option>
-                <option value={4}>4x</option>
-                <option value={10}>10x</option>
-              </select>
+          <>
+            <Pitch tokens={replay.tokens} smooth smoothMs={1000 / replay.speed} />
+            <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => replay.setPlaying((p) => !p)}
+                  className="shrink-0 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+                >
+                  {replay.playing ? '일시정지' : '재생'}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(activeFrames.length - 1, 0)}
+                  value={replay.idx}
+                  onChange={(e) => {
+                    replay.setPlaying(false);
+                    replay.setIdx(Number(e.target.value));
+                  }}
+                  className="flex-1 accent-emerald-500"
+                />
+                <select
+                  value={replay.speed}
+                  onChange={(e) => replay.setSpeed(Number(e.target.value))}
+                  className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
+                >
+                  <option value={1}>1x</option>
+                  <option value={4}>4x</option>
+                  <option value={10}>10x</option>
+                </select>
+              </div>
+              <p className="mt-2 text-xs text-neutral-500">
+                공의 실제 좌표는 StatsBomb 데이터, 나머지 선수 움직임은 포메이션 기반으로
+                구성한 시각화입니다.
+                {whatIf &&
+                  ' 지금은 왼쪽에서 적용한 변경 이후를 AI가 다시 생성한 가상 시나리오를 재생 중입니다.'}
+              </p>
             </div>
-          </div>
+          </>
         )}
 
         {cardsSoFar.length > 0 && (
@@ -361,22 +272,18 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
       <aside className="flex flex-col gap-4">
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
           <h3 className="mb-2 text-sm font-semibold text-neutral-200">
-            감독 모드: {managedTeamId === match.homeTeam.id ? match.homeTeam.name : match.awayTeam.name}
+            감독 모드: {managedTeamName}
           </h3>
           <p className="mb-3 text-xs text-neutral-500">
-            노란 테두리가 있는 선수를 드래그해 위치를 바꿀 수 있습니다.
+            왼쪽 스쿼드에서 교체하거나 전술을 바꾸면, 그 순간부터 AI가 다시 만든 흐름으로
+            재생됩니다.
           </p>
           <button
             type="button"
-            onClick={() => {
-              setPositionOverrides({});
-              setLineupOverride(null);
-              setManualSubstitutions([]);
-              setSelectedFormation(undefined);
-            }}
+            onClick={resetChanges}
             className="mb-2 w-full rounded border border-neutral-700 px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800"
           >
-            배치 초기화
+            변경 초기화 (실제 경기로 복귀)
           </button>
           <button
             type="button"
@@ -430,14 +337,15 @@ export function MatchBoard({ match, positions, initialSnapshot }: MatchBoardProp
         {proposedChange ? (
           <WhatIfPanel
             match={match}
-            minute={minute}
+            minute={currentMinute}
             teamId={managedTeamId}
             proposedChange={proposedChange}
+            onResult={(result) => setWhatIf(result)}
           />
         ) : (
           <div className="rounded-lg border border-dashed border-neutral-800 p-4 text-xs text-neutral-500">
             왼쪽 스쿼드에서 선수 교체를 적용하거나 전술(포메이션)을 변경하면,
-            그 이후 전개를 AI가 시뮬레이션할 수 있습니다.
+            그 이후 전개를 AI가 재생성해서 이 피치에서 이어서 재생합니다.
           </div>
         )}
       </aside>

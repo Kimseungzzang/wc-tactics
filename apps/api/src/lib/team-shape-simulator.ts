@@ -10,6 +10,7 @@ export type PlayerEventType = 'HOME' | 'SUPPORT' | 'PRESS';
 export interface SimBallEvent {
   id: string;
   teamId: number;
+  type: string;
   period: number;
   minute: number;
   second: number;
@@ -20,6 +21,10 @@ export interface SimBallEvent {
   endY: number | null;
   contStart: number;
   contEnd: number;
+  /** The player physically performing this action (passer/carrier/shooter). */
+  playerId: number | null;
+  /** For Pass events: who the ball is going to. */
+  recipientId: number | null;
 }
 
 export interface SimSnapshotPlayer {
@@ -120,18 +125,43 @@ export function simulateTeamShape(params: {
         const home = homePosition(p.positionId, ev.period, (period) =>
           attackDirection(teamId, period),
         );
-        const dx = ballTargetX - home.x;
-        const dy = ballTargetY - home.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const proximity = 1 - clamp(dist / 55, 0, 1);
-        let pull = (isPossessing ? 0.5 : 0.32) * proximity;
-        if (p.positionId === 1) pull *= 0.2; // goalkeepers barely leave their line
-
-        const toX = clamp(home.x + dx * pull, 1, PITCH_LENGTH - 1);
-        const toY = clamp(home.y + dy * pull, 1, PITCH_WIDTH - 1);
         const from = lastPos.get(p.playerId) ?? home;
-        const type: PlayerEventType =
-          pull <= PRESS_THRESHOLD ? 'HOME' : isPossessing ? 'SUPPORT' : 'PRESS';
+
+        const isActor = p.playerId === ev.playerId;
+        const isRecipient = ev.recipientId != null && p.playerId === ev.recipientId;
+        const hasRealEnd = ev.endX != null && ev.endY != null;
+
+        let toX: number;
+        let toY: number;
+        let type: PlayerEventType;
+
+        if (isActor && ev.type === 'Carry' && hasRealEnd) {
+          // The real ball path IS this player physically running with the
+          // ball - use it directly rather than the generic pull heuristic.
+          toX = ev.endX!;
+          toY = ev.endY!;
+          type = 'SUPPORT';
+        } else if (isActor) {
+          // Passer/shooter/duel participant: real touch point.
+          toX = ev.x;
+          toY = ev.y;
+          type = 'SUPPORT';
+        } else if (isRecipient && hasRealEnd) {
+          // Pass target: moves to meet the incoming ball.
+          toX = ev.endX!;
+          toY = ev.endY!;
+          type = 'SUPPORT';
+        } else {
+          const dx = ballTargetX - home.x;
+          const dy = ballTargetY - home.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const proximity = 1 - clamp(dist / 55, 0, 1);
+          let pull = (isPossessing ? 0.5 : 0.32) * proximity;
+          if (p.positionId === 1) pull *= 0.2; // goalkeepers barely leave their line
+          toX = clamp(home.x + dx * pull, 1, PITCH_LENGTH - 1);
+          toY = clamp(home.y + dy * pull, 1, PITCH_WIDTH - 1);
+          type = pull <= PRESS_THRESHOLD ? 'HOME' : isPossessing ? 'SUPPORT' : 'PRESS';
+        }
 
         const row: SimPlayerEventRow = {
           playerId: p.playerId,

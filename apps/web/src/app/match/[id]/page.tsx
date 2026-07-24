@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getMatchDetail, getPositions, getSnapshot } from '@/lib/api';
+import { getMatchDetail, getSnapshot } from '@/lib/api';
 import { MatchBoard } from '@/components/MatchBoard';
 
 export default async function MatchPage({
@@ -10,9 +10,8 @@ export default async function MatchPage({
   const { id } = await params;
   const matchId = Number(id);
 
-  const [match, positions, snapshot] = await Promise.all([
+  const [match, snapshot] = await Promise.all([
     getMatchDetail(matchId),
-    getPositions(),
     getSnapshot(matchId, 0),
   ]);
 
@@ -26,7 +25,7 @@ export default async function MatchPage({
           {match.matchDate} · {match.competitionStage} · {match.stadiumName}
         </span>
       </div>
-      <MatchBoard match={match} positions={positions} initialSnapshot={snapshot} />
+      <MatchBoard match={match} initialSnapshot={snapshot} />
     </div>
   );
 }

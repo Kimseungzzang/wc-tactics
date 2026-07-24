@@ -47,8 +47,8 @@ async function main(): Promise<void> {
   console.log(`Generated ${playerEventRows.length} player events for match ${matchId}`);
 
   await prisma.matchFrame.deleteMany({ where: { matchId } });
-  const frameRows = frames.map((f) => ({
-    id: `${matchId}-${Math.round(f.t * 10)}`,
+  const frameRows = frames.map((f, i) => ({
+    id: `${matchId}-${i}`,
     matchId,
     t: f.t,
     period: f.period,

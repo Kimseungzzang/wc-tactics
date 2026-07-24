@@ -1,7 +1,6 @@
 import { POSITION_COORDINATES } from '../positions/position-coordinates';
 
-const STEP_SECONDS = 1;
-const MAX_GAP_SECONDS = 20; // gaps larger than this (e.g. halftime) are skipped, not interpolated
+const STEP_SECONDS = 0.4; // sampling step WITHIN a single event's span (not a global fixed grid)
 const PITCH_LENGTH = 120; // StatsBomb units
 const PITCH_WIDTH = 80;
 const PRESS_THRESHOLD = 0.12; // pull magnitude above which a player's event is tagged PRESS/SUPPORT rather than HOME
@@ -124,9 +123,9 @@ export function simulateTeamShape(params: {
         const dx = ballTargetX - home.x;
         const dy = ballTargetY - home.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        const proximity = 1 - clamp(dist / 40, 0, 1);
-        let pull = (isPossessing ? 0.22 : 0.13) * proximity;
-        if (p.positionId === 1) pull *= 0.15; // goalkeepers barely leave their line
+        const proximity = 1 - clamp(dist / 55, 0, 1);
+        let pull = (isPossessing ? 0.5 : 0.32) * proximity;
+        if (p.positionId === 1) pull *= 0.2; // goalkeepers barely leave their line
 
         const toX = clamp(home.x + dx * pull, 1, PITCH_LENGTH - 1);
         const toY = clamp(home.y + dy * pull, 1, PITCH_WIDTH - 1);
@@ -154,56 +153,54 @@ export function simulateTeamShape(params: {
     playerEventsByBallEvent.set(ev.id, segment);
   }
 
-  const firstT = ballEvents[0].contStart;
-  const lastT = ballEvents[ballEvents.length - 1].contEnd;
+  // Sample frames WITHIN each event's own real span (not a fixed global time
+  // grid) - a fixed 1s grid was silently skipping short events (a quick
+  // Ball Receipt/Pressure/Duel spanning <1s could fall entirely between two
+  // grid ticks), which read as the ball "freezing" during buildup play.
+  // Gaps between events (e.g. halftime) are naturally skipped since we
+  // never interpolate across them - only within a single event's span.
   const frames: SimFrameRow[] = [];
 
-  let eventIdx = 0;
-  for (let t = firstT; t <= lastT; t += STEP_SECONDS) {
-    while (eventIdx + 1 < ballEvents.length && ballEvents[eventIdx + 1].contStart <= t) {
-      eventIdx++;
-    }
-    const ev = ballEvents[eventIdx];
-    const nextEv = ballEvents[eventIdx + 1];
-
-    if (t > ev.contEnd && nextEv && nextEv.contStart - t > MAX_GAP_SECONDS) {
-      t = nextEv.contStart - STEP_SECONDS;
-      continue;
-    }
-
-    const progress = clamp((t - ev.contStart) / (ev.contEnd - ev.contStart), 0, 1);
-
-    let ballX: number;
-    let ballY: number;
-    if (ev.endX != null && ev.endY != null && t <= ev.contEnd) {
-      ballX = lerp(ev.x, ev.endX, progress);
-      ballY = lerp(ev.y, ev.endY, progress);
-    } else {
-      ballX = ev.endX ?? ev.x;
-      ballY = ev.endY ?? ev.y;
-    }
-
+  for (const ev of ballEvents) {
+    const span = Math.max(ev.contEnd - ev.contStart, 0.01);
+    const steps = Math.max(1, Math.ceil(span / STEP_SECONDS));
     const segment = playerEventsByBallEvent.get(ev.id) ?? [];
-    const players: SimFramePlayer[] = segment.map((pe) => {
-      const px = t <= pe.endT ? lerp(pe.fromX, pe.toX, progress) : pe.toX;
-      const py = t <= pe.endT ? lerp(pe.fromY, pe.toY, progress) : pe.toY;
-      return {
-        playerId: pe.playerId,
-        teamId: pe.teamId,
-        x: (clamp(px, 0, PITCH_LENGTH) / PITCH_LENGTH) * 100,
-        y: (clamp(py, 0, PITCH_WIDTH) / PITCH_WIDTH) * 100,
-      };
-    });
 
-    frames.push({
-      t,
-      period: ev.period,
-      minute: ev.minute,
-      second: ev.second,
-      ballX: (ballX / PITCH_LENGTH) * 100,
-      ballY: (ballY / PITCH_WIDTH) * 100,
-      players,
-    });
+    for (let s = 0; s <= steps; s++) {
+      const progress = s / steps;
+      const t = ev.contStart + progress * span;
+
+      let ballX: number;
+      let ballY: number;
+      if (ev.endX != null && ev.endY != null) {
+        ballX = lerp(ev.x, ev.endX, progress);
+        ballY = lerp(ev.y, ev.endY, progress);
+      } else {
+        ballX = ev.x;
+        ballY = ev.y;
+      }
+
+      const players: SimFramePlayer[] = segment.map((pe) => {
+        const px = lerp(pe.fromX, pe.toX, progress);
+        const py = lerp(pe.fromY, pe.toY, progress);
+        return {
+          playerId: pe.playerId,
+          teamId: pe.teamId,
+          x: (clamp(px, 0, PITCH_LENGTH) / PITCH_LENGTH) * 100,
+          y: (clamp(py, 0, PITCH_WIDTH) / PITCH_WIDTH) * 100,
+        };
+      });
+
+      frames.push({
+        t,
+        period: ev.period,
+        minute: ev.minute,
+        second: ev.second,
+        ballX: (clamp(ballX, 0, PITCH_LENGTH) / PITCH_LENGTH) * 100,
+        ballY: (clamp(ballY, 0, PITCH_WIDTH) / PITCH_WIDTH) * 100,
+        players,
+      });
+    }
   }
 
   return { playerEvents, frames };

@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { getMatchDetail, getPositions, getSnapshot } from '@/lib/api';
 import { MatchBoard } from '@/components/MatchBoard';
-import { Replay } from '@/components/Replay';
 
 export default async function MatchPage({
   params,
@@ -28,9 +27,6 @@ export default async function MatchPage({
         </span>
       </div>
       <MatchBoard match={match} positions={positions} initialSnapshot={snapshot} />
-      <div className="px-6 pb-6">
-        <Replay match={match} />
-      </div>
     </div>
   );
 }

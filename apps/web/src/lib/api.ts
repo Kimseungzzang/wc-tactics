@@ -3,6 +3,7 @@ import type {
   MatchFrame,
   MatchSnapshotResponse,
   MatchSummary,
+  PlayerStatsResponse,
   PositionCoordinate,
   RecommendTacticsRequest,
   TacticsRecommendation,
@@ -57,6 +58,10 @@ export function recommendTactics(
     `/matches/${matchId}/tactics/recommend`,
     { method: 'POST', body: JSON.stringify(body) },
   );
+}
+
+export function getPlayer(playerId: number): Promise<PlayerStatsResponse> {
+  return apiFetch<PlayerStatsResponse>(`/players/${playerId}`);
 }
 
 export function generateWhatIf(

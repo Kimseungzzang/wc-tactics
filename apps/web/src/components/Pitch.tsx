@@ -51,15 +51,45 @@ export function Pitch({ tokens, onMove, smooth, smoothMs = 950 }: PitchProps) {
           'repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0, rgba(255,255,255,0.05) 1px, transparent 1px, transparent 12.5%)',
       }}
     >
-      <div className="pointer-events-none absolute inset-0 border-2 border-white/25 m-3 rounded-sm" />
-      <div
-        className="pointer-events-none absolute top-1/2 left-0 h-0 w-full border-t-2 border-white/25"
-        style={{ transform: 'translateY(-50%)' }}
-      />
-      <div
-        className="pointer-events-none absolute top-1/2 left-1/2 h-24 w-24 rounded-full border-2 border-white/25"
-        style={{ transform: 'translate(-50%, -50%)' }}
-      />
+      <div className="pointer-events-none absolute inset-0 m-3">
+        <div className="absolute inset-0 rounded-sm border-2 border-white/25" />
+        <div
+          className="absolute top-1/2 left-0 h-0 w-full border-t-2 border-white/25"
+          style={{ transform: 'translateY(-50%)' }}
+        />
+        <div
+          className="absolute top-1/2 left-1/2 h-24 w-24 rounded-full border-2 border-white/25"
+          style={{ transform: 'translate(-50%, -50%)' }}
+        />
+
+        {/* Left goal */}
+        <div
+          className="absolute left-0 border-2 border-l-0 border-white/25"
+          style={{ top: '19%', height: '62%', width: '16%' }}
+        />
+        <div
+          className="absolute left-0 border-2 border-l-0 border-white/25"
+          style={{ top: '37%', height: '26%', width: '5.5%' }}
+        />
+        <div
+          className="absolute left-0 bg-white/80"
+          style={{ top: '45%', height: '10%', width: '3px' }}
+        />
+
+        {/* Right goal (mirrored) */}
+        <div
+          className="absolute right-0 border-2 border-r-0 border-white/25"
+          style={{ top: '19%', height: '62%', width: '16%' }}
+        />
+        <div
+          className="absolute right-0 border-2 border-r-0 border-white/25"
+          style={{ top: '37%', height: '26%', width: '5.5%' }}
+        />
+        <div
+          className="absolute right-0 bg-white/80"
+          style={{ top: '45%', height: '10%', width: '3px' }}
+        />
+      </div>
 
       {tokens.map((t) =>
         t.kind === 'ball' ? (

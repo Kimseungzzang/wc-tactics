@@ -155,6 +155,28 @@ export interface WhatIfMoment {
   commentary: string;
 }
 
+export interface PlayerAttributesBlock {
+  pace: number;
+  shooting: number;
+  passing: number;
+  defending: number;
+  physical: number;
+  stamina: number;
+}
+
+export interface PlayerStatsResponse {
+  playerId: number;
+  name: string;
+  tournamentAppearances: number;
+  starts: number;
+  goals: number;
+  yellowCards: number;
+  redCards: number;
+  timesBroughtOnAsSub: number;
+  timesSubbedOff: number;
+  attributes: PlayerAttributesBlock | null;
+}
+
 export interface WhatIfScenarioResponse {
   summary: string;
   moments: WhatIfMoment[];

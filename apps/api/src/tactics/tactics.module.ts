@@ -10,5 +10,6 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [TacticsController],
   providers: [TacticsService, WhatIfService, GeminiService, TacticsToolsService],
+  exports: [TacticsToolsService],
 })
 export class TacticsModule {}

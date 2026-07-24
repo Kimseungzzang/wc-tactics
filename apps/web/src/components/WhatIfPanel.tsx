@@ -9,7 +9,12 @@ interface WhatIfPanelProps {
   minute: number;
   teamId: number;
   proposedChange?: ProposedChange;
-  onResult: (result: { summary: string; moments: WhatIfMoment[]; frames: MatchFrame[] }) => void;
+  onResult: (result: {
+    summary: string;
+    moments: WhatIfMoment[];
+    frames: MatchFrame[];
+    rollbackMinute: number;
+  }) => void;
 }
 
 const MOMENT_LABEL: Record<string, string> = {
@@ -33,7 +38,7 @@ export function WhatIfPanel({ match, minute, teamId, proposedChange, onResult }:
     try {
       const data = await generateWhatIf(match.id, { minute, teamId, proposedChange });
       setState({ loading: false, summary: data.summary, moments: data.moments, error: null });
-      onResult(data);
+      onResult({ ...data, rollbackMinute: minute });
     } catch (err) {
       setState({
         loading: false,

@@ -6,6 +6,7 @@ import type {
   MatchDetail,
   MatchFrame,
   MatchSnapshotResponse,
+  MatchTimelineEntry,
   SnapshotPlayer,
   TacticsRecommendation,
   WhatIfMoment,
@@ -19,6 +20,32 @@ interface MatchBoardProps {
   match: MatchDetail;
   initialSnapshot: MatchSnapshotResponse;
 }
+
+function timelineEventBanner(e: MatchTimelineEntry): { icon: string; text: string } {
+  switch (e.type) {
+    case 'GOAL':
+      return { icon: '⚽', text: `GOAL! ${String(e.detail.name)}` };
+    case 'OWN_GOAL':
+      return { icon: '⚽', text: `자책골 (${String(e.detail.name)})` };
+    case 'CARD': {
+      const cardType = String(e.detail.cardType);
+      const icon = cardType.includes('Red') || cardType.includes('Second') ? '🟥' : '🟨';
+      return { icon, text: `${String(e.detail.name)} 경고` };
+    }
+    case 'SUBSTITUTION':
+      return { icon: '🔄', text: `${String(e.detail.outName)} ➜ ${String(e.detail.inName)}` };
+    default:
+      return { icon: '•', text: e.type };
+  }
+}
+
+const MOMENT_ICON: Record<string, string> = {
+  SHOT: '⚽',
+  CHANCE: '🔥',
+  TURNOVER: '🔁',
+  CLEARANCE: '🧤',
+  BUILD_UP: '▶️',
+};
 
 export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
   const jerseyByPlayer = useMemo(() => {
@@ -52,6 +79,7 @@ export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
     frames: MatchFrame[];
     summary: string;
     moments: WhatIfMoment[];
+    rollbackMinute: number;
   } | null>(null);
 
   const [matchFrames, setMatchFrames] = useState<MatchFrame[]>([]);
@@ -153,6 +181,28 @@ export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
         }
       : undefined;
 
+  const bannerContent = useMemo(() => {
+    const cur = replay.current;
+    if (!cur) return null;
+    if (whatIf) {
+      const moment = whatIf.moments.find((m) => {
+        const mMinute = whatIf.rollbackMinute + Math.floor(m.offsetSeconds / 60);
+        const mSecond = m.offsetSeconds % 60;
+        return cur.minute === mMinute && cur.second >= mSecond && cur.second < mSecond + 4;
+      });
+      if (!moment) return null;
+      return { icon: MOMENT_ICON[moment.type] ?? '▶️', text: moment.commentary };
+    }
+    const event = match.timeline.find(
+      (e) =>
+        ['GOAL', 'OWN_GOAL', 'CARD', 'SUBSTITUTION'].includes(e.type) &&
+        e.minute === cur.minute &&
+        cur.second >= e.second &&
+        cur.second < e.second + 4,
+    );
+    return event ? timelineEventBanner(event) : null;
+  }, [replay, whatIf, match.timeline]);
+
   const cardsSoFar = match.timeline.filter(
     (e) => e.type === 'CARD' && e.minute <= currentMinute,
   );
@@ -213,7 +263,14 @@ export function MatchBoard({ match, initialSnapshot }: MatchBoardProps) {
           </div>
         ) : (
           <>
-            <Pitch tokens={replay.tokens} smooth smoothMs={1000 / replay.speed} />
+            <div className="relative">
+              <Pitch tokens={replay.tokens} smooth smoothMs={1000 / replay.speed} />
+              {bannerContent && (
+                <div className="pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-sm font-semibold whitespace-nowrap text-white shadow-lg">
+                  {bannerContent.icon} {bannerContent.text}
+                </div>
+              )}
+            </div>
             <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
               <div className="flex items-center gap-3">
                 <button

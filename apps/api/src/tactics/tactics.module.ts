@@ -9,7 +9,12 @@ import { PrismaModule } from '../prisma/prisma.module';
 @Module({
   imports: [PrismaModule],
   controllers: [TacticsController],
-  providers: [TacticsService, WhatIfService, GeminiService, TacticsToolsService],
+  providers: [
+    TacticsService,
+    WhatIfService,
+    GeminiService,
+    TacticsToolsService,
+  ],
   exports: [TacticsToolsService],
 })
 export class TacticsModule {}

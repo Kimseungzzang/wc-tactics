@@ -5,13 +5,13 @@ import { TacticsToolsService } from '../tactics/tactics-tools.service';
 export class PlayersController {
   constructor(private readonly tools: TacticsToolsService) {}
 
+  // There's no more tournament-wide "appearances/starts/goals" record to
+  // show (no per-match squad selection or real event log left - see
+  // TacticsToolsService's doc comments) - just the constructed FIFA-style
+  // ratings.
   @Get(':id')
   async get(@Param('id', ParseIntPipe) id: number) {
-    const [attributesResult, stats] = await Promise.all([
-      this.tools.getPlayerAttributes(id),
-      this.tools.getPlayerStats(id),
-    ]);
-
+    const attributesResult = await this.tools.getPlayerAttributes(id);
     const attributes =
       'pace' in attributesResult
         ? {
@@ -24,6 +24,10 @@ export class PlayersController {
           }
         : null;
 
-    return { ...stats, attributes };
+    return {
+      playerId: attributesResult.playerId,
+      name: attributesResult.name,
+      attributes,
+    };
   }
 }

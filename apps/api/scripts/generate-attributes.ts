@@ -2,8 +2,8 @@
  * Generates mock/constructed FIFA-style player attributes and team
  * tactical profiles. Explicitly NOT derived from real aggregate stats -
  * deterministic (seeded by id) so re-running is idempotent, with a base
- * range picked from each player's most common REAL position (from
- * MatchSnapshot) so ratings feel grounded even though the numbers
+ * range picked from each player's real `position` (GK/DF/MF/FW, from the
+ * Wikipedia squad table) so ratings feel grounded even though the numbers
  * themselves are invented. Allowed as "구성 데이터" per contest rules.
  *
  * Run with: pnpm generate:attributes
@@ -13,10 +13,12 @@ import { createPrismaClient } from '../src/prisma/prisma-client-factory';
 
 type PositionGroup = 'GK' | 'DEF' | 'MID' | 'FWD';
 
-const GK_IDS = new Set([1]);
-const DEF_IDS = new Set([2, 3, 4, 5, 6, 7, 8]);
-const FWD_IDS = new Set([17, 21, 22, 23, 24, 25]);
-// everything else (9-16, 18-20) is MID
+const POSITION_CODE_TO_GROUP: Record<string, PositionGroup> = {
+  GK: 'GK',
+  DF: 'DEF',
+  MF: 'MID',
+  FW: 'FWD',
+};
 
 const ATTRIBUTE_RANGES: Record<
   PositionGroup,
@@ -56,13 +58,6 @@ const ATTRIBUTE_RANGES: Record<
   },
 };
 
-function positionGroup(positionId: number): PositionGroup {
-  if (GK_IDS.has(positionId)) return 'GK';
-  if (DEF_IDS.has(positionId)) return 'DEF';
-  if (FWD_IDS.has(positionId)) return 'FWD';
-  return 'MID';
-}
-
 /** Deterministic PRNG (mulberry32) seeded by an integer id, so re-runs are stable. */
 function seededRandom(seed: number): () => number {
   let a = seed >>> 0;
@@ -79,34 +74,12 @@ function rangedInt(rand: () => number, [min, max]: [number, number]): number {
   return Math.round(min + rand() * (max - min));
 }
 
-interface SnapshotPlayer {
-  playerId: number;
-  positionId: number;
-}
-
 const prisma = createPrismaClient();
 
 async function main(): Promise<void> {
-  const snapshots = await prisma.matchSnapshot.findMany({ select: { lineup: true } });
-  const positionCounts = new Map<number, Map<number, number>>();
-  for (const s of snapshots) {
-    const lineup = JSON.parse(s.lineup) as SnapshotPlayer[];
-    for (const p of lineup) {
-      const counts = positionCounts.get(p.playerId) ?? new Map<number, number>();
-      counts.set(p.positionId, (counts.get(p.positionId) ?? 0) + 1);
-      positionCounts.set(p.playerId, counts);
-    }
-  }
-
-  function modePosition(playerId: number): number {
-    const counts = positionCounts.get(playerId);
-    if (!counts || counts.size === 0) return 14; // default: Center Midfield
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-  }
-
-  const players = await prisma.player.findMany({ select: { id: true } });
-  const playerRows = players.map(({ id }) => {
-    const group = positionGroup(modePosition(id));
+  const players = await prisma.player.findMany({ select: { id: true, position: true } });
+  const playerRows = players.map(({ id, position }) => {
+    const group = POSITION_CODE_TO_GROUP[position] ?? 'MID';
     const rand = seededRandom(id);
     const ranges = ATTRIBUTE_RANGES[group];
     return {

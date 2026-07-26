@@ -37,7 +37,17 @@ function findFrameIndex(frames: MatchFrame[], t: number): number {
  * around events), so stepping by a fixed frame count per tick would make
  * "speed" meaningless relative to the actual match clock.
  */
-export function useFramePlayback(frames: MatchFrame[], match: MatchDetail, autoPlay = false) {
+export function useFramePlayback(
+  frames: MatchFrame[],
+  match: MatchDetail,
+  autoPlay = false,
+  /** When true, reaching the last available frame holds playback there
+   * instead of pausing - used while an AI what-if scenario is still
+   * streaming in more chunks, so playback resumes on its own once the
+   * next chunk's frames extend `lastT` rather than requiring the user to
+   * hit play again. */
+  moreComing = false,
+) {
   const firstT = frames[0]?.t ?? 0;
   const lastT = frames[frames.length - 1]?.t ?? 0;
 
@@ -46,12 +56,15 @@ export function useFramePlayback(frames: MatchFrame[], match: MatchDetail, autoP
   const [speed, setSpeed] = useState(15);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Reset playback position when a new frames array arrives (e.g. a fresh
-  // AI what-if scenario) - adjusted during render per React's guidance,
-  // rather than in an effect, since it's purely derived from a prop change.
-  const [prevFrames, setPrevFrames] = useState(frames);
-  if (frames !== prevFrames) {
-    setPrevFrames(frames);
+  // Reset playback position only when the scenario actually changes (a new
+  // starting frame), not merely when the array is extended - streamed
+  // what-if chunks append to `frames` (new array reference, same first
+  // element) and must NOT yank playback back to the start each time a
+  // chunk arrives. Adjusted during render per React's guidance, rather
+  // than in an effect, since it's purely derived from a prop change.
+  const [prevFirstFrame, setPrevFirstFrame] = useState(frames[0]);
+  if (frames[0] !== prevFirstFrame) {
+    setPrevFirstFrame(frames[0]);
     setT(firstT);
   }
 
@@ -74,7 +87,7 @@ export function useFramePlayback(frames: MatchFrame[], match: MatchDetail, autoP
           next = nextFrame.t;
         }
         if (next >= lastT) {
-          setPlaying(false);
+          if (!moreComing) setPlaying(false);
           return lastT;
         }
         return next;
@@ -83,7 +96,7 @@ export function useFramePlayback(frames: MatchFrame[], match: MatchDetail, autoP
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [playing, frames, speed, lastT]);
+  }, [playing, frames, speed, lastT, moreComing]);
 
   const idx = useMemo(() => findFrameIndex(frames, t), [frames, t]);
   const current = frames[idx];

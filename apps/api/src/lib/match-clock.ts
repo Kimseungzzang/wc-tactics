@@ -34,7 +34,9 @@ export function buildMatchClock(
   // timestamps - dedupe by period so each period's offset is computed once.
   const uniqueByPeriod = new Map<number, PeriodEnd>();
   for (const end of periodEnds) uniqueByPeriod.set(end.period, end);
-  const sortedPeriods = [...uniqueByPeriod.values()].sort((a, b) => a.period - b.period);
+  const sortedPeriods = [...uniqueByPeriod.values()].sort(
+    (a, b) => a.period - b.period,
+  );
   let running = 0;
   for (const end of sortedPeriods) {
     cumulativeOffset.set(end.period, running);

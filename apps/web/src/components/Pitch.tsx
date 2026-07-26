@@ -20,9 +20,13 @@ interface PitchProps {
   /** Animate position changes via CSS transition (for frame playback). */
   smooth?: boolean;
   smoothMs?: number;
+  /** Static ball-path overlay (0-100 coords) - used to compare the real
+   * match's actual path against the AI what-if's live ball position on
+   * the same pitch ("평행세계 비교"). Purely decorative, never draggable. */
+  trail?: { x: number; y: number }[];
 }
 
-export function Pitch({ tokens, onMove, smooth, smoothMs = 950 }: PitchProps) {
+export function Pitch({ tokens, onMove, smooth, smoothMs = 950, trail }: PitchProps) {
   const pitchRef = useRef<HTMLDivElement>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
 
@@ -90,6 +94,34 @@ export function Pitch({ tokens, onMove, smooth, smoothMs = 950 }: PitchProps) {
           style={{ top: '45%', height: '10%', width: '3px' }}
         />
       </div>
+
+      {trail && trail.length > 1 && (
+        <svg
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          <polyline
+            points={trail.map((p) => `${p.x},${p.y}`).join(' ')}
+            fill="none"
+            stroke="#fbbf24"
+            strokeWidth="0.6"
+            strokeDasharray="1.6 1.4"
+            strokeLinecap="round"
+            opacity={0.75}
+          />
+          {trail.map((p, i) => (
+            <circle
+              key={i}
+              cx={p.x}
+              cy={p.y}
+              r={i === trail.length - 1 ? 1.3 : 0.7}
+              fill="#fbbf24"
+              opacity={i === trail.length - 1 ? 0.95 : 0.55}
+            />
+          ))}
+        </svg>
+      )}
 
       {tokens.map((t) =>
         t.kind === 'ball' ? (

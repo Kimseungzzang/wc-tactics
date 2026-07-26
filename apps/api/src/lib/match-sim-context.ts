@@ -6,7 +6,11 @@ export interface MatchSimContext {
   teamIds: [number, number];
   ballEvents: SimBallEvent[]; // sorted by contStart, real events with continuous-time fields
   attackDirection: (teamId: number, period: number) => 1 | -1;
-  getLineupAt: (teamId: number, minute: number, second: number) => SimSnapshotPlayer[];
+  getLineupAt: (
+    teamId: number,
+    minute: number,
+    second: number,
+  ) => SimSnapshotPlayer[];
   clock: (period: number, minute: number, second: number) => number;
 }
 
@@ -22,16 +26,20 @@ export async function buildMatchSimContext(
   prisma: PrismaClient,
   matchId: number,
 ): Promise<MatchSimContext> {
-  const match = await prisma.match.findUniqueOrThrow({ where: { id: matchId } });
+  const match = await prisma.match.findUniqueOrThrow({
+    where: { id: matchId },
+  });
   const teamIds: [number, number] = [match.homeTeamId, match.awayTeamId];
 
-  const rawBallEvents = await prisma.matchBallEvent.findMany({ where: { matchId } });
-  const halfEnds = await prisma.matchEvent.findMany({
-    where: { matchId, type: 'HALF_END' },
+  const rawBallEvents = await prisma.matchBallEvent.findMany({
+    where: { matchId },
   });
-  const clock = buildMatchClock(
-    halfEnds.map((h) => ({ period: h.period, minute: h.minute, second: h.second })),
-  );
+  // Every match is now AI-generated from kickoff (no real StatsBomb-style
+  // half markers exist anymore) and never leaves period 1 (see
+  // generate-mock-ball-events.ts's old doc comment for why that was
+  // already true even before this), so there are no HALF_END rows to
+  // build period offsets from.
+  const clock = buildMatchClock([]);
 
   const ballEvents: SimBallEvent[] = rawBallEvents
     .map((e) => {
@@ -64,7 +72,9 @@ export async function buildMatchSimContext(
   const period1Direction = new Map<number, 1 | -1>();
   for (const teamId of teamIds) {
     const firstSnap = snapshots.find((s) => s.teamId === teamId);
-    const lineup: SimSnapshotPlayer[] = firstSnap ? JSON.parse(firstSnap.lineup) : [];
+    const lineup: SimSnapshotPlayer[] = firstSnap
+      ? JSON.parse(firstSnap.lineup)
+      : [];
     const gk = lineup.find((p) => p.positionId === 1);
     let direction: 1 | -1 = 1;
     if (gk) {
@@ -83,14 +93,21 @@ export async function buildMatchSimContext(
     return period % 2 === 1 ? base : ((base * -1) as 1 | -1);
   }
 
-  const snapshotIdxByTeam = new Map<number, number>(teamIds.map((id) => [id, -1]));
-  function getLineupAt(teamId: number, minute: number, second: number): SimSnapshotPlayer[] {
+  const snapshotIdxByTeam = new Map<number, number>(
+    teamIds.map((id) => [id, -1]),
+  );
+  function getLineupAt(
+    teamId: number,
+    minute: number,
+    second: number,
+  ): SimSnapshotPlayer[] {
     let idx = snapshotIdxByTeam.get(teamId)!;
     const teamSnapshots = snapshots.filter((s) => s.teamId === teamId);
     let best = idx >= 0 ? teamSnapshots[idx] : undefined;
     for (let i = idx + 1; i < teamSnapshots.length; i++) {
       const s = teamSnapshots[i];
-      if (s.minute > minute || (s.minute === minute && s.second > second)) break;
+      if (s.minute > minute || (s.minute === minute && s.second > second))
+        break;
       best = s;
       idx = i;
     }

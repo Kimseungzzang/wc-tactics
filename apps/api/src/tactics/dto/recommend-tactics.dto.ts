@@ -4,6 +4,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -16,6 +17,23 @@ export class ProposedSubstitutionDto {
   inPlayerId: number;
 }
 
+export class TacticalDialDto {
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  pressingIntensity: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  possessionStyle: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  defensiveLine: number;
+}
+
 export class ProposedChangeDto {
   @IsOptional()
   @IsString()
@@ -26,6 +44,11 @@ export class ProposedChangeDto {
   @ValidateNested({ each: true })
   @Type(() => ProposedSubstitutionDto)
   substitutions?: ProposedSubstitutionDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TacticalDialDto)
+  tacticalDial?: TacticalDialDto;
 }
 
 export class RecommendTacticsDto {

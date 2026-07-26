@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { getPlayer } from '@/lib/api';
-import type { MatchDetail, PlayerStatsResponse, SnapshotPlayer } from '@/lib/types';
+import type { MatchDetail, PlayerStatsResponse, SnapshotPlayer, TacticalProfile } from '@/lib/types';
+import { TacticalDialPanel } from './TacticalDialPanel';
+import { PlayerStatsBars } from './PlayerStatsBars';
 
 const FORMATIONS = [
   '4-3-3',
@@ -15,15 +17,6 @@ const FORMATIONS = [
   '4-4-1-1',
 ];
 
-const ATTRIBUTE_LABEL: Record<string, string> = {
-  pace: '속도',
-  shooting: '슈팅',
-  passing: '패스',
-  defending: '수비',
-  physical: '피지컬',
-  stamina: '체력',
-};
-
 interface SquadPanelProps {
   match: MatchDetail;
   managedTeamId: number;
@@ -33,6 +26,16 @@ interface SquadPanelProps {
   selectedFormation: string | undefined;
   onFormationChange: (formation: string | undefined) => void;
   onSubstitute: (outPlayerId: number, inPlayerId: number) => void;
+  substitutionsUsed: number;
+  maxSubstitutions: number;
+  /** playerIds currently occupying an already-used substitution slot (i.e.
+   * came ON earlier) - re-substituting one of these updates that same slot
+   * instead of consuming a new one, so it stays selectable past the cap. */
+  substitutedInPlayerIds: Set<number>;
+  tacticalBaseline: TacticalProfile | null;
+  tacticalDial: TacticalProfile | undefined;
+  onTacticalDialChange: (next: TacticalProfile) => void;
+  onTacticalDialReset: () => void;
 }
 
 export function SquadPanel({
@@ -44,7 +47,15 @@ export function SquadPanel({
   selectedFormation,
   onFormationChange,
   onSubstitute,
+  substitutionsUsed,
+  maxSubstitutions,
+  substitutedInPlayerIds,
+  tacticalBaseline,
+  tacticalDial,
+  onTacticalDialChange,
+  onTacticalDialReset,
 }: SquadPanelProps) {
+  const atSubLimit = substitutionsUsed >= maxSubstitutions;
   const [pendingOutId, setPendingOutId] = useState<number | null>(null);
   const [statsPlayerId, setStatsPlayerId] = useState<number | null>(null);
   const [stats, setStats] = useState<PlayerStatsResponse | null>(null);
@@ -78,11 +89,19 @@ export function SquadPanel({
   };
 
   return (
-    <div className="flex w-full flex-col gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+    <div className="hud-card flex w-full flex-col gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-200">{managedTeamName} 스쿼드</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-hud text-sm font-bold text-neutral-200">{managedTeamName} 스쿼드</h3>
+          <span
+            className={`font-mono text-[11px] ${atSubLimit ? 'text-amber-400' : 'text-neutral-500'}`}
+          >
+            교체 {substitutionsUsed}/{maxSubstitutions}
+          </span>
+        </div>
         <p className="mt-1 text-xs text-neutral-500">
           이름을 누르면 능력치·기록을 보고, 교체 버튼으로 선수를 바꾸세요.
+          {atSubLimit && ' 교체 한도를 모두 사용했습니다.'}
         </p>
       </div>
 
@@ -104,6 +123,13 @@ export function SquadPanel({
         </select>
       </div>
 
+      <TacticalDialPanel
+        baseline={tacticalBaseline}
+        value={tacticalDial}
+        onChange={onTacticalDialChange}
+        onReset={onTacticalDialReset}
+      />
+
       <div>
         <h4 className="mb-1.5 text-xs font-semibold text-neutral-400">
           선발 ({currentLineup.length})
@@ -118,12 +144,13 @@ export function SquadPanel({
                 highlighted={pendingOutId === p.playerId}
                 onClick={() => showStats(p.playerId)}
                 actionLabel="교체"
+                actionDisabled={atSubLimit && !substitutedInPlayerIds.has(p.playerId)}
                 onAction={() =>
                   setPendingOutId((prev) => (prev === p.playerId ? null : p.playerId))
                 }
               />
               {statsPlayerId === p.playerId && (
-                <StatsCard loading={statsLoading} stats={stats} />
+                <PlayerStatsBars loading={statsLoading} stats={stats} />
               )}
             </li>
           ))}
@@ -146,7 +173,7 @@ export function SquadPanel({
                 }}
               />
               {statsPlayerId === p.playerId && (
-                <StatsCard loading={statsLoading} stats={stats} />
+                <PlayerStatsBars loading={statsLoading} stats={stats} />
               )}
             </li>
           ))}
@@ -192,48 +219,10 @@ function PlayerRow({
         type="button"
         onClick={onAction}
         disabled={actionDisabled}
-        className="shrink-0 rounded bg-emerald-700 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600"
+        className="hud-btn shrink-0 rounded bg-[var(--hud-accent-strong)] px-2 py-1 text-[10px] text-white disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600 disabled:shadow-none"
       >
         {actionLabel}
       </button>
-    </div>
-  );
-}
-
-function StatsCard({ loading, stats }: { loading: boolean; stats: PlayerStatsResponse | null }) {
-  return (
-    <div className="mt-1 mb-1 rounded border border-neutral-800 bg-neutral-950 p-2 text-[11px]">
-      {loading && <p className="text-neutral-500">불러오는 중...</p>}
-      {!loading && stats && (
-        <>
-          <div className="mb-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 text-neutral-400">
-            <span>출전 {stats.tournamentAppearances}</span>
-            <span>선발 {stats.starts}</span>
-            <span>골 {stats.goals}</span>
-            <span>
-              경고/퇴장 {stats.yellowCards}/{stats.redCards}
-            </span>
-          </div>
-          {stats.attributes && (
-            <div className="space-y-1">
-              {Object.entries(stats.attributes).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <span className="w-9 shrink-0 text-neutral-500">
-                    {ATTRIBUTE_LABEL[key] ?? key}
-                  </span>
-                  <div className="h-1.5 flex-1 rounded-full bg-neutral-800">
-                    <div
-                      className="h-1.5 rounded-full bg-emerald-500"
-                      style={{ width: `${value}%` }}
-                    />
-                  </div>
-                  <span className="w-6 shrink-0 text-right text-neutral-400">{value}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
     </div>
   );
 }

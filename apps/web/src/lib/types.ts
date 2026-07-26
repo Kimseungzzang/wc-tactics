@@ -3,58 +3,74 @@ export interface TeamRef {
   name: string;
 }
 
-export interface MatchSummary {
-  id: number;
-  matchDate: string;
-  kickOff: string;
-  competitionStage: string | null;
-  matchWeek: number | null;
-  stadiumName: string | null;
-  homeTeam: TeamRef;
-  awayTeam: TeamRef;
-  homeScore: number;
-  awayScore: number;
-}
-
-export type MatchEventType =
-  | 'STARTING_XI'
-  | 'TACTICAL_SHIFT'
-  | 'SUBSTITUTION'
-  | 'GOAL'
-  | 'OWN_GOAL'
-  | 'CARD'
-  | 'HALF_END';
-
-export interface MatchTimelineEntry {
-  id: string;
-  type: MatchEventType;
-  teamId: number | null;
-  period: number;
-  minute: number;
-  second: number;
-  detail: Record<string, unknown>;
-}
-
 export interface SquadEntry {
   playerId: number;
   name: string;
   jerseyNumber: number;
-  isStarter: boolean;
+  position: string;
+}
+
+/** 0-100 dials, 50 = neutral baseline. Mirrors the backend TeamTacticalProfile
+ * / TacticalDial shape - see team-shape-simulator.ts on the API side for
+ * what each value actually does to player positioning and pressing. */
+export interface TacticalProfile {
+  pressingIntensity: number;
+  possessionStyle: number;
+  defensiveLine: number;
+}
+
+export interface TeamMatchStats {
+  possession: number;
+  shots: number;
+  shotsOnTarget: number;
+  corners: number;
+  passes: number;
+  passesCompleted: number;
+  passAccuracy: number;
+  saves: number;
+  xg: number;
+}
+
+export interface MatchStats {
+  home: TeamMatchStats;
+  away: TeamMatchStats;
+}
+
+/** Lightweight per-event projection used to compute (and live-update) the
+ * stats panel client-side - see lib/matchStats.ts. */
+export interface MatchBallEventLite {
+  id: string;
+  teamId: number;
+  type: string;
+  outcome: string | null;
+  minute: number;
+  second: number;
+}
+
+/** A narrated moment from the match's AI-generated ball-event stream - the
+ * AI writes `commentary` itself (see what-if.service.ts), this isn't a
+ * template pick. `isGoal` drives the goal flash/banner in MatchBoard. */
+export interface MatchHighlight {
+  id: string;
+  teamId: number;
+  minute: number;
+  second: number;
+  playerName: string | null;
+  isGoal: boolean;
+  commentary: string;
 }
 
 export interface MatchDetail {
   id: number;
-  matchDate: string;
-  kickOff: string;
-  stadiumName: string | null;
-  competitionStage: string | null;
-  matchWeek: number | null;
-  refereeName: string | null;
-  homeTeam: TeamRef & { managerName: string | null };
-  awayTeam: TeamRef & { managerName: string | null };
+  competitionStage: string;
+  matchWeek: number;
+  played: boolean;
+  homeTeam: TeamRef & { tacticalProfile: TacticalProfile | null };
+  awayTeam: TeamRef & { tacticalProfile: TacticalProfile | null };
   homeScore: number;
   awayScore: number;
-  timeline: MatchTimelineEntry[];
+  ballEvents: MatchBallEventLite[];
+  highlights: MatchHighlight[];
   squads: Record<string, SquadEntry[]>;
 }
 
@@ -95,6 +111,7 @@ export interface ProposedSubstitution {
 export interface ProposedChange {
   formation?: string;
   substitutions?: ProposedSubstitution[];
+  tacticalDial?: TacticalProfile;
 }
 
 export interface RecommendTacticsRequest {
@@ -145,6 +162,8 @@ export type WhatIfOutcome =
   | 'Won'
   | 'Lost';
 
+export type WhatIfZone = 'left' | 'center' | 'right';
+
 export interface WhatIfMoment {
   offsetSeconds: number;
   teamId: number;
@@ -153,6 +172,15 @@ export interface WhatIfMoment {
   type: WhatIfMomentType;
   outcome: WhatIfOutcome;
   commentary: string;
+  /** Pitch position the model chose for this moment - the backend derives
+   * the ball's actual coordinates from these (not from `type`), so the
+   * pitch stays consistent with what `commentary` describes. */
+  zone: WhatIfZone;
+  progress: number;
+  /** Absolute match clock this moment resolves to (offsetSeconds resets to
+   * 0 at the start of every streamed chunk, so it alone isn't enough). */
+  atMinute?: number;
+  atSecond?: number;
 }
 
 export interface PlayerAttributesBlock {
@@ -164,21 +192,126 @@ export interface PlayerAttributesBlock {
   stamina: number;
 }
 
+/** No more tournament-wide appearances/goals/cards record - every campaign
+ * is its own random draw/schedule, so a team's/player's history only means
+ * something within one campaign (see TacticsToolsService.getOpponentTendencies
+ * on the API side for the equivalent, campaign-scoped idea for teams). */
 export interface PlayerStatsResponse {
   playerId: number;
   name: string;
-  tournamentAppearances: number;
-  starts: number;
-  goals: number;
-  yellowCards: number;
-  redCards: number;
-  timesBroughtOnAsSub: number;
-  timesSubbedOff: number;
   attributes: PlayerAttributesBlock | null;
 }
 
-export interface WhatIfScenarioResponse {
+export interface WhatIfChunk {
+  chunkIndex: number;
   summary: string;
   moments: WhatIfMoment[];
   frames: MatchFrame[];
+  done: boolean;
+  error?: string;
+}
+
+export type CampaignOutcome = 'WIN' | 'DRAW' | 'LOSS';
+
+export interface CampaignRecord {
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+export interface CampaignFixture {
+  matchId: number;
+  opponentName: string;
+  stage: string;
+  matchWeek: number;
+  result: {
+    myScore: number;
+    opponentScore: number;
+    outcome: CampaignOutcome;
+  };
+}
+
+export interface CampaignNextMatch {
+  matchId: number;
+  opponentName: string;
+  stage: string;
+  matchWeek: number;
+}
+
+export interface GroupStandingRow {
+  teamId: number;
+  teamName: string;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+}
+
+export interface CampaignDetail {
+  id: string;
+  teamId: number;
+  teamName: string;
+  managerNickname: string;
+  fixtures: CampaignFixture[];
+  nextMatch: CampaignNextMatch | null;
+  record: CampaignRecord;
+  eliminated: boolean;
+  groupStandings: GroupStandingRow[] | null;
+}
+
+export interface CampaignSummary {
+  campaignId: string;
+  teamId: number;
+  teamName: string;
+  record: CampaignRecord;
+}
+
+/** One of the 12 groups from the campaign's real-pot-constrained random
+ * draw (see campaigns.service.ts's getFullDraw) - for the post-draw
+ * reveal screen, which shows all 12 at once, not just the manager's own. */
+export interface FullDrawGroup {
+  letter: string;
+  teams: TeamRef[];
+}
+
+/** One of the 12 groups' full standings table - for the "다른 조 순위" modal. */
+export interface GroupStandingsBlock {
+  letter: string;
+  standings: GroupStandingRow[];
+}
+
+/** One row of a team's leaderboard - every manager who ever started a
+ * career with this specific team, ranked by furthest stage reached, then
+ * goal difference, then wins (see campaigns.service.ts's
+ * getTeamRankings). Comparing across different teams isn't meaningful
+ * (team strength varies too much), so this is always scoped to one team. */
+export interface TeamRankingRow {
+  rank: number;
+  campaignId: string;
+  managerNickname: string;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalDifference: number;
+  maxStage: string | null;
+}
+
+/** One entry on the manager's own team's date-based schedule - played or
+ * not (see campaigns.service.ts's getSchedule). `matchWeek` maps to a
+ * real calendar date via lib/matchdayDates.ts. */
+export interface ScheduleEntry {
+  matchId: number;
+  matchWeek: number;
+  stage: string;
+  opponentName: string;
+  played: boolean;
+  result: {
+    myScore: number;
+    opponentScore: number;
+    outcome: CampaignOutcome;
+  } | null;
 }

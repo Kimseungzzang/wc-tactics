@@ -6,25 +6,6 @@ import { getTeamSnapshotAtMinute } from './snapshot.util';
 export class MatchesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
-    const matches = await this.prisma.match.findMany({
-      include: { homeTeam: true, awayTeam: true },
-      orderBy: [{ matchDate: 'asc' }, { id: 'asc' }],
-    });
-    return matches.map((m) => ({
-      id: m.id,
-      matchDate: m.matchDate,
-      kickOff: m.kickOff,
-      competitionStage: m.competitionStage,
-      matchWeek: m.matchWeek,
-      stadiumName: m.stadiumName,
-      homeTeam: { id: m.homeTeam.id, name: m.homeTeam.name },
-      awayTeam: { id: m.awayTeam.id, name: m.awayTeam.name },
-      homeScore: m.homeScore,
-      awayScore: m.awayScore,
-    }));
-  }
-
   async detail(matchId: number) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
@@ -34,62 +15,96 @@ export class MatchesService {
       throw new NotFoundException(`Match not found: id=${matchId}`);
     }
 
-    const [events, squad] = await Promise.all([
-      this.prisma.matchEvent.findMany({
-        where: { matchId },
-        orderBy: [{ minute: 'asc' }, { second: 'asc' }],
-      }),
-      this.prisma.matchSquad.findMany({
-        where: { matchId },
-        include: { player: true },
-      }),
-    ]);
+    const [roster, tacticalProfiles, highlights, ballEventsLite] =
+      await Promise.all([
+        this.prisma.player.findMany({
+          where: { teamId: { in: [match.homeTeamId, match.awayTeamId] } },
+        }),
+        this.prisma.teamTacticalProfile.findMany({
+          where: { teamId: { in: [match.homeTeamId, match.awayTeamId] } },
+        }),
+        // Every persisted ball event that came from an AI-generated moment
+        // carries the AI's own commentary line (see what-if.service.ts) -
+        // the single synthetic kickoff anchor event is the only row with no
+        // commentary, so filtering on it gives exactly the narrated log.
+        this.prisma.matchBallEvent.findMany({
+          where: { matchId, commentary: { not: null } },
+          orderBy: [{ minute: 'asc' }, { second: 'asc' }],
+        }),
+        // Lightweight projection of every ball event, for the stats panel -
+        // computed client-side (see matchStats.ts) from this raw list so it
+        // can be re-aggregated live as the clock advances (or truncated to
+        // "up to the current minute"), rather than the server sending one
+        // fixed full-match total.
+        this.prisma.matchBallEvent.findMany({
+          where: { matchId },
+          select: {
+            id: true,
+            teamId: true,
+            type: true,
+            outcome: true,
+            minute: true,
+            second: true,
+          },
+          orderBy: [{ minute: 'asc' }, { second: 'asc' }],
+        }),
+      ]);
+
+    const profileByTeam = new Map(tacticalProfiles.map((p) => [p.teamId, p]));
+    const tacticalProfileOf = (teamId: number) => {
+      const p = profileByTeam.get(teamId);
+      return p
+        ? {
+            pressingIntensity: p.pressingIntensity,
+            possessionStyle: p.possessionStyle,
+            defensiveLine: p.defensiveLine,
+          }
+        : null;
+    };
 
     return {
       id: match.id,
-      matchDate: match.matchDate,
-      kickOff: match.kickOff,
-      stadiumName: match.stadiumName,
       competitionStage: match.competitionStage,
       matchWeek: match.matchWeek,
-      refereeName: match.refereeName,
+      played: match.played,
       homeTeam: {
         id: match.homeTeam.id,
         name: match.homeTeam.name,
-        managerName: match.homeManagerName,
+        tacticalProfile: tacticalProfileOf(match.homeTeamId),
       },
       awayTeam: {
         id: match.awayTeam.id,
         name: match.awayTeam.name,
-        managerName: match.awayManagerName,
+        tacticalProfile: tacticalProfileOf(match.awayTeamId),
       },
       homeScore: match.homeScore,
       awayScore: match.awayScore,
-      timeline: events.map((e) => ({
+      ballEvents: ballEventsLite,
+      highlights: highlights.map((e) => ({
         id: e.id,
-        type: e.type,
         teamId: e.teamId,
-        period: e.period,
         minute: e.minute,
         second: e.second,
-        detail: JSON.parse(e.payload) as Record<string, unknown>,
+        playerName: e.playerName,
+        isGoal: e.type === 'Shot' && e.outcome === 'Goal',
+        commentary: e.commentary!,
       })),
       squads: {
-        [match.homeTeamId]: squad
-          .filter((s) => s.teamId === match.homeTeamId)
-          .map((s) => ({
-            playerId: s.playerId,
-            name: s.player.name,
-            jerseyNumber: s.jerseyNumber,
-            isStarter: s.isStarter,
+        [match.homeTeamId]: roster
+          .filter((p) => p.teamId === match.homeTeamId)
+          .map((p) => ({
+            playerId: p.id,
+            name: p.name,
+            jerseyNumber: p.jerseyNumber,
+            position: p.position,
           })),
-        [match.awayTeamId]: squad
-          .filter((s) => s.teamId === match.awayTeamId)
-          .map((s) => ({
-            playerId: s.playerId,
-            name: s.player.name,
-            jerseyNumber: s.jerseyNumber,
-            isStarter: s.isStarter,
+        [match.awayTeamId]: roster
+          .filter((p) => p.teamId === match.awayTeamId)
+          .map((p) => ({
+            playerId: p.id,
+            name: p.name,
+            jerseyNumber: p.jerseyNumber,
+            position: p.position,
           })),
       },
     };
@@ -123,31 +138,5 @@ export class MatchesService {
         ...away,
       },
     };
-  }
-
-  async frames(matchId: number) {
-    const match = await this.prisma.match.findUnique({ where: { id: matchId } });
-    if (!match) {
-      throw new NotFoundException(`Match not found: id=${matchId}`);
-    }
-
-    const frames = await this.prisma.matchFrame.findMany({
-      where: { matchId },
-      orderBy: { t: 'asc' },
-    });
-    return frames.map((f) => ({
-      t: f.t,
-      period: f.period,
-      minute: f.minute,
-      second: f.second,
-      ballX: f.ballX,
-      ballY: f.ballY,
-      players: JSON.parse(f.players) as {
-        playerId: number;
-        teamId: number;
-        x: number;
-        y: number;
-      }[],
-    }));
   }
 }

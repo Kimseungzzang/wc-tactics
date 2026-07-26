@@ -18,9 +18,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seed": "tsx scripts/seed-statsbomb.ts",
-    "seed:ball-events": "tsx scripts/seed-ball-events.ts",
-    "seed:frames": "tsx scripts/simulate-frames.ts",
+    "seed": "tsx scripts/seed-wikipedia-2026.ts",
     "generate:attributes": "tsx scripts/generate-attributes.ts"
   },
   "dependencies": {

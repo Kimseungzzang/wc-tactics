@@ -20,7 +20,210 @@
 }
 
 body {
-  background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  /* Same poster gradient as the group-draw reveal, everywhere - a
+   * deliberate single-theme commitment (see GroupDrawReveal.tsx), not a
+   * light/dark-aware background. Fixed so it doesn't tile/scroll away on
+   * long pages. */
+  background: linear-gradient(135deg, #ff5b2e 0%, #e0293f 28%, #8a1e6b 55%, #2c2c8f 78%, #1a3a7a 100%);
+  background-attachment: fixed;
+  min-height: 100%;
+}
+
+/* ---------- Console-sports-HUD primitives ---------- */
+/* Warm gold accent (matches the group-draw poster's highlight color),
+ * used sparingly - score digits, primary CTAs, active-state rails. */
+:root {
+  --hud-accent: #ffd23f;
+  --hud-accent-strong: #f0b100;
+}
+
+/* ---------- Poster-gradient glassmorphism ----------
+ * Unlayered (outside any @layer), so per CSS cascade rules these always
+ * win over Tailwind's own utilities (declared inside @layer utilities)
+ * regardless of source order - this reskins every existing bg-neutral-*/
+/* border-neutral-* usage across the app into frosted glass over the
+ * gradient, without having to touch every component's className. */
+.bg-neutral-950 {
+  background-color: transparent;
+}
+.bg-neutral-900 {
+  background-color: rgba(18, 10, 28, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.bg-neutral-800 {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+.bg-neutral-700 {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+.hover\:bg-neutral-800:hover {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+.border-neutral-800 {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.border-neutral-700 {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.border-neutral-600 {
+  border-color: rgba(255, 255, 255, 0.32);
+}
+.hover\:border-neutral-600:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+/* Leftover raw emerald-* utility usage (pre-restyle "success/accent"
+ * color) reskinned to the same warm gold as --hud-accent, so old and new
+ * components read as one consistent palette without editing every file
+ * that used the Tailwind green directly instead of the CSS variable. */
+.bg-emerald-950\/40,
+.bg-emerald-950\/30 {
+  background-color: rgba(240, 177, 0, 0.16);
+}
+.bg-emerald-900\/40,
+.bg-emerald-900\/50,
+.bg-emerald-900 {
+  background-color: rgba(240, 177, 0, 0.22);
+}
+.bg-emerald-800,
+.bg-emerald-700 {
+  background-color: rgba(240, 177, 0, 0.3);
+}
+.bg-emerald-600 {
+  background-color: #f0b100;
+}
+.bg-emerald-400\/20 {
+  background-color: rgba(255, 210, 63, 0.2);
+}
+.bg-emerald-100 {
+  background-color: rgba(255, 226, 122, 0.9);
+}
+.hover\:bg-emerald-600:hover,
+.hover\:bg-emerald-500:hover {
+  background-color: #ffd23f;
+}
+.border-emerald-800,
+.border-emerald-700,
+.border-emerald-600,
+.border-emerald-500 {
+  border-color: rgba(255, 210, 63, 0.55);
+}
+.text-emerald-400,
+.text-emerald-300,
+.text-emerald-500 {
+  color: #ffd23f;
+}
+.text-emerald-100 {
+  color: #3a2600;
+}
+
+/* Page headers use bg-gradient-to-b from-neutral-900 to-neutral-950 (a
+ * gradient utility, not a flat background-color one) - overridden as its
+ * own combined-selector rule since the neutral-900/950 overrides above
+ * only patch flat backgrounds, not gradient stops. */
+.bg-gradient-to-b.from-neutral-900.to-neutral-950 {
+  background-image: linear-gradient(to bottom, rgba(20, 10, 30, 0.55), rgba(10, 6, 20, 0.32));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.font-hud {
+  font-family: var(--font-hud), var(--font-geist-sans), sans-serif;
+}
+
+/* Big tabular score/number display - team headers, stat panel totals. */
+.hud-score {
+  font-family: var(--font-hud), var(--font-geist-sans), sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Chunky, pressable primary action button - a visible "lift" that
+ * compresses on click rather than a flat color-swap hover. */
+.hud-btn {
+  font-family: var(--font-hud), var(--font-geist-sans), sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  box-shadow:
+    0 3px 0 0 rgba(0, 0, 0, 0.45),
+    0 8px 16px -6px rgba(0, 0, 0, 0.55);
+  transition:
+    transform 90ms ease,
+    box-shadow 90ms ease,
+    filter 90ms ease;
+}
+.hud-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.hud-btn:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow:
+    0 1px 0 0 rgba(0, 0, 0, 0.45),
+    0 3px 8px -4px rgba(0, 0, 0, 0.55);
+}
+.hud-btn:disabled {
+  box-shadow: none;
+  filter: grayscale(0.4);
+}
+
+/* Card with real depth (shadow + faint inner highlight) instead of a flat
+ * border, and a slight lift on hover for anything clickable. */
+.hud-card {
+  box-shadow:
+    0 10px 28px -12px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+.hud-card-interactive {
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+.hud-card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 16px 34px -14px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+}
+
+/* Goal celebration overlay (MatchBoard) */
+@keyframes goal-flash-bg {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes goal-flash-pop {
+  0% { opacity: 0; transform: scale(0.55) rotate(-3deg); }
+  15% { opacity: 1; transform: scale(1.12) rotate(1deg); }
+  25% { transform: scale(1) rotate(0deg); }
+  78% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.02); }
+}
+.animate-goal-flash-bg {
+  animation: goal-flash-bg 1.8s ease-out forwards;
+}
+.animate-goal-flash-pop {
+  animation: goal-flash-pop 1.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+/* Stadium-entrance transition (match page mount) */
+@keyframes tunnel-zoom-out {
+  0% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(2.4); }
+}
+.animate-tunnel-zoom-out {
+  animation: tunnel-zoom-out 650ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-goal-flash-bg,
+  .animate-goal-flash-pop,
+  .animate-tunnel-zoom-out {
+    animation-duration: 0.01ms !important;
+  }
 }

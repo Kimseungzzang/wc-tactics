@@ -35,6 +35,23 @@ export interface SimSnapshotPlayer {
   positionName: string;
 }
 
+/** 0-100 tactical dials, 50 = neutral/baseline (reproduces the pre-dial
+ * simulator exactly). Drives both the deterministic pitch simulation below
+ * and (via the caller) the AI's own reasoning, so a manager's tactical
+ * choice is one number that visibly changes the team shape AND what the
+ * AI narrates - not just a label. */
+export interface TacticalDial {
+  pressingIntensity: number;
+  possessionStyle: number;
+  defensiveLine: number;
+}
+
+const NEUTRAL_DIAL: TacticalDial = {
+  pressingIntensity: 50,
+  possessionStyle: 50,
+  defensiveLine: 50,
+};
+
 export interface SimPlayerEventRow {
   playerId: number;
   teamId: number;
@@ -91,6 +108,33 @@ export function homePosition(
 }
 
 /**
+ * Applies a team's tactical dial on top of the static formation position:
+ * defensiveLine shifts the whole shape up/down the pitch (low block <->
+ * high line), possessionStyle scales how wide the shape sits (narrow/
+ * direct <-> wide/possession). Goalkeepers are left anchored regardless -
+ * no dial should move a keeper off their line.
+ */
+function tacticalHomePosition(
+  positionId: number,
+  period: number,
+  attackDirection: (period: number) => 1 | -1,
+  dial: TacticalDial,
+): { x: number; y: number } {
+  const base = homePosition(positionId, period, attackDirection);
+  if (positionId === 1) return base;
+
+  const dir = attackDirection(period);
+  const lineShift = ((dial.defensiveLine - 50) / 50) * 8 * dir;
+  const widthScale = 0.7 + (dial.possessionStyle / 100) * 0.6;
+  const yFromCenter = base.y - PITCH_WIDTH / 2;
+
+  return {
+    x: clamp(base.x + lineShift, 2, PITCH_LENGTH - 2),
+    y: clamp(PITCH_WIDTH / 2 + yFromCenter * widthScale, 2, PITCH_WIDTH - 2),
+  };
+}
+
+/**
  * Given a real or AI-generated ball-event stream (ball position is always
  * ground truth for whichever source produced it - real StatsBomb data or
  * an AI what-if scenario), computes discrete per-player movement events
@@ -102,10 +146,24 @@ export function homePosition(
 export function simulateTeamShape(params: {
   ballEvents: SimBallEvent[]; // must be sorted by contStart ascending
   teamIds: [number, number];
-  getLineup: (teamId: number, minute: number, second: number) => SimSnapshotPlayer[];
+  getLineup: (
+    teamId: number,
+    minute: number,
+    second: number,
+  ) => SimSnapshotPlayer[];
   attackDirection: (teamId: number, period: number) => 1 | -1;
+  /** Defaults to neutral (50/50/50) for both teams, which reproduces the
+   * pre-dial simulator's output exactly - the offline real-match seeder
+   * relies on this default and never needs to pass one. */
+  getTacticalDial?: (teamId: number) => TacticalDial;
 }): { playerEvents: SimPlayerEventRow[]; frames: SimFrameRow[] } {
-  const { ballEvents, teamIds, getLineup, attackDirection } = params;
+  const {
+    ballEvents,
+    teamIds,
+    getLineup,
+    attackDirection,
+    getTacticalDial = () => NEUTRAL_DIAL,
+  } = params;
   if (ballEvents.length === 0) return { playerEvents: [], frames: [] };
 
   const lastPos = new Map<number, { x: number; y: number }>();
@@ -121,14 +179,19 @@ export function simulateTeamShape(params: {
     for (const teamId of teamIds) {
       const lineup = getLineup(teamId, ev.minute, ev.second);
       const isPossessing = teamId === possessionTeamId;
+      const dial = getTacticalDial(teamId);
       for (const p of lineup) {
-        const home = homePosition(p.positionId, ev.period, (period) =>
-          attackDirection(teamId, period),
+        const home = tacticalHomePosition(
+          p.positionId,
+          ev.period,
+          (period) => attackDirection(teamId, period),
+          dial,
         );
         const from = lastPos.get(p.playerId) ?? home;
 
         const isActor = p.playerId === ev.playerId;
-        const isRecipient = ev.recipientId != null && p.playerId === ev.recipientId;
+        const isRecipient =
+          ev.recipientId != null && p.playerId === ev.recipientId;
         const hasRealEnd = ev.endX != null && ev.endY != null;
 
         let toX: number;
@@ -157,10 +220,22 @@ export function simulateTeamShape(params: {
           const dist = Math.sqrt(dx * dx + dy * dy);
           const proximity = 1 - clamp(dist / 55, 0, 1);
           let pull = (isPossessing ? 0.5 : 0.32) * proximity;
+          if (!isPossessing) {
+            // Pressing intensity only changes how hard the OUT-of-possession
+            // team closes the ball down - a high-press team's off-the-ball
+            // players visibly collapse toward the ball, a low block barely
+            // moves off its home shape.
+            pull *= 0.5 + dial.pressingIntensity / 100;
+          }
           if (p.positionId === 1) pull *= 0.2; // goalkeepers barely leave their line
           toX = clamp(home.x + dx * pull, 1, PITCH_LENGTH - 1);
           toY = clamp(home.y + dy * pull, 1, PITCH_WIDTH - 1);
-          type = pull <= PRESS_THRESHOLD ? 'HOME' : isPossessing ? 'SUPPORT' : 'PRESS';
+          type =
+            pull <= PRESS_THRESHOLD
+              ? 'HOME'
+              : isPossessing
+                ? 'SUPPORT'
+                : 'PRESS';
         }
 
         const row: SimPlayerEventRow = {

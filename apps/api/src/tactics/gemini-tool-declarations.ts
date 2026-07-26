@@ -4,7 +4,7 @@ export const TACTICS_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'get_match_state',
     description:
-      '주어진 경기의 특정 분(minute) 시점까지의 스코어와 카드 현황을 조회합니다.',
+      '주어진 경기의 특정 분(minute) 시점까지의 스코어를 조회합니다.',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -28,18 +28,6 @@ export const TACTICS_TOOL_DECLARATIONS: FunctionDeclaration[] = [
     },
   },
   {
-    name: 'get_player_stats',
-    description:
-      '한 선수의 2022 월드컵 통산 기록(출전 수, 선발 수, 골, 경고/퇴장, 교체 이력)을 조회합니다.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        playerId: { type: Type.INTEGER },
-      },
-      required: ['playerId'],
-    },
-  },
-  {
     name: 'get_bench_players',
     description:
       '주어진 경기·팀·시점 기준으로 아직 투입되지 않아 교체로 투입 가능한 벤치 선수 목록을 조회합니다.',
@@ -56,13 +44,14 @@ export const TACTICS_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'get_opponent_tendencies',
     description:
-      '한 팀이 2022 월드컵에서 주로 사용한 포메이션과 득실점 경향을 조회합니다. 상대 팀 분석에 사용하세요.',
+      '한 팀이 이번 대회(같은 커리어)에서 지금까지 치른 경기의 전적과 득실점 경향을 조회합니다. 상대 팀 분석에 사용하세요.',
     parameters: {
       type: Type.OBJECT,
       properties: {
         teamId: { type: Type.INTEGER },
+        matchId: { type: Type.INTEGER },
       },
-      required: ['teamId'],
+      required: ['teamId', 'matchId'],
     },
   },
   {

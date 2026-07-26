@@ -12,11 +12,6 @@ import { MatchesService } from './matches.service';
 export class MatchesController {
   constructor(private readonly service: MatchesService) {}
 
-  @Get()
-  list() {
-    return this.service.list();
-  }
-
   @Get(':id')
   detail(@Param('id', ParseIntPipe) id: number) {
     return this.service.detail(id);
@@ -28,10 +23,5 @@ export class MatchesController {
     @Query('minute', new DefaultValuePipe(0), ParseIntPipe) minute: number,
   ) {
     return this.service.snapshotAtMinute(id, minute);
-  }
-
-  @Get(':id/frames')
-  frames(@Param('id', ParseIntPipe) id: number) {
-    return this.service.frames(id);
   }
 }

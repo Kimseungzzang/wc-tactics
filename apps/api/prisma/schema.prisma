@@ -9,34 +9,45 @@ datasource db {
   provider = "sqlite"
 }
 
-// StatsBomb team_id
+// 2026 FIFA World Cup entrant, real data (Wikipedia, CC BY-SA 4.0).
 model Team {
-  id   Int    @id
-  name String
+  id             Int    @id
+  name           String
+  // Real 2026 draw seeding pot (1-4) - see scripts/team-pot-data.ts.
+  pot            Int
+  // Real confederation code (UEFA/CONMEBOL/CONCACAF/CAF/AFC/OFC) - used by
+  // the group-draw algorithm's "no two same-confederation teams per group"
+  // constraint (UEFA exempted, 1-2 per group).
+  confederation  String
 
-  homeMatches Match[]       @relation("HomeTeam")
-  awayMatches Match[]       @relation("AwayTeam")
-  squadEntries MatchSquad[]
-  events       MatchEvent[]
-  snapshots    MatchSnapshot[]
+  homeMatches     Match[]              @relation("HomeTeam")
+  awayMatches     Match[]              @relation("AwayTeam")
+  players         Player[]
+  snapshots       MatchSnapshot[]
   tacticalProfile TeamTacticalProfile?
+  campaigns       Campaign[]
 }
 
-// StatsBomb player_id
+// Real 2026 World Cup squad entry (Wikipedia, CC BY-SA 4.0). Each player
+// belongs to exactly one team's roster - Wikipedia has no per-match lineup
+// data, so there is no separate "squad for this match" concept anymore
+// (see the old MatchSquad, removed).
 model Player {
-  id   Int    @id
-  name String
+  id           Int    @id
+  name         String
+  teamId       Int
+  team         Team   @relation(fields: [teamId], references: [id])
+  jerseyNumber Int
+  // Real broad position category from the Wikipedia squad table: GK/DF/MF/FW.
+  position     String
 
-  squadEntries MatchSquad[]
-  attributes   PlayerAttributes?
+  attributes PlayerAttributes?
 }
 
 // Constructed/mock FIFA-style ratings (1-99), NOT derived from real
 // aggregate stats. Deterministically generated per player (seeded by
-// playerId) with a base range from their most common real position -
-// explicitly allowed as "구성 데이터" per contest rules. Used by the AI
-// what-if generator (Gemini tool calls) and by the frame simulator's
-// team-shape heuristic (e.g. pace/stamina could later modulate pull).
+// playerId), base range picked from their real `position` group -
+// explicitly allowed as "구성 데이터" per contest rules.
 model PlayerAttributes {
   playerId  Int    @id
   player    Player @relation(fields: [playerId], references: [id])
@@ -49,94 +60,74 @@ model PlayerAttributes {
 }
 
 // Constructed/mock team playing-style parameters (0-100), seeded by
-// teamId. Feeds the AI what-if generator's tactical reasoning.
+// teamId. Feeds the AI what-if generator's tactical reasoning and the
+// lightweight background-match score simulator.
 model TeamTacticalProfile {
-  teamId             Int  @id
-  team               Team @relation(fields: [teamId], references: [id])
-  pressingIntensity  Int
-  possessionStyle    Int
-  defensiveLine      Int
+  teamId            Int  @id
+  team              Team @relation(fields: [teamId], references: [id])
+  pressingIntensity Int
+  possessionStyle   Int
+  defensiveLine     Int
 }
 
-// StatsBomb match_id
+// A manager's run through the tournament with one team, identified by a
+// nickname only (no password/auth - this is a hackathon demo, not a real
+// account system).
+model Manager {
+  id        String     @id @default(cuid())
+  nickname  String     @unique
+  createdAt DateTime   @default(now())
+  campaigns Campaign[]
+}
+
+model Campaign {
+  id        String   @id @default(cuid())
+  managerId String
+  manager   Manager  @relation(fields: [managerId], references: [id])
+  teamId    Int
+  team      Team     @relation(fields: [teamId], references: [id])
+  createdAt DateTime @default(now())
+  matches   Match[]
+
+  @@unique([managerId, teamId])
+}
+
+// A single tournament match, always owned by exactly one Campaign - the
+// group draw and full schedule (group stage + knockout) are generated
+// fresh per campaign (real FIFA pot/confederation constraints, but a
+// random draw every time - see the group-draw service), not a shared
+// real-world catalog. `played=false` means homeScore/awayScore are not
+// yet meaningful (both default 0). Whether a played match was a
+// win/draw/loss for a given team is computed on demand from the scores,
+// never stored - a "for team X" result isn't a property of the match
+// itself, since most matches don't involve the campaign's own team.
 model Match {
-  id              Int      @id
-  matchDate       String
-  kickOff         String
-  stadiumName     String?
-  competitionStage String?
-  matchWeek       Int?
-  homeManagerName String?
-  awayManagerName String?
-  refereeName     String?
+  id               Int      @id @default(autoincrement())
+  campaignId       String
+  campaign         Campaign @relation(fields: [campaignId], references: [id])
+  competitionStage String
+  matchWeek        Int
 
   homeTeamId Int
   homeTeam   Team @relation("HomeTeam", fields: [homeTeamId], references: [id])
   awayTeamId Int
   awayTeam   Team @relation("AwayTeam", fields: [awayTeamId], references: [id])
 
-  homeScore Int
-  awayScore Int
+  played    Boolean @default(false)
+  homeScore Int     @default(0)
+  awayScore Int     @default(0)
 
-  squad        MatchSquad[]
-  events       MatchEvent[]
-  snapshots    MatchSnapshot[]
-  ballEvents   MatchBallEvent[]
-  playerEvents MatchPlayerEvent[]
-  frames       MatchFrame[]
+  snapshots  MatchSnapshot[]
+  ballEvents MatchBallEvent[]
+
+  @@index([campaignId, competitionStage])
 }
 
-// Full squad (starters + bench) per team per match, from lineups/{id}.json
-model MatchSquad {
-  id            String  @id @default(cuid())
-  matchId       Int
-  match         Match   @relation(fields: [matchId], references: [id])
-  teamId        Int
-  team          Team    @relation(fields: [teamId], references: [id])
-  playerId      Int
-  player        Player  @relation(fields: [playerId], references: [id])
-  jerseyNumber  Int?
-  isStarter     Boolean @default(false)
-
-  @@unique([matchId, playerId])
-  @@index([matchId, teamId])
-}
-
-enum MatchEventType {
-  STARTING_XI
-  TACTICAL_SHIFT
-  SUBSTITUTION
-  GOAL
-  OWN_GOAL
-  CARD
-  HALF_END
-}
-
-// Filtered, timeline-relevant events only (goals/cards/subs/tactical shifts),
-// derived from events/{id}.json. Full StatsBomb event stream is not persisted.
-model MatchEvent {
-  id        String         @id
-  matchId   Int
-  match     Match          @relation(fields: [matchId], references: [id])
-  teamId    Int?
-  team      Team?          @relation(fields: [teamId], references: [id])
-  type      MatchEventType
-  period    Int
-  minute    Int
-  second    Int
-  // Type-specific details as JSON, e.g.
-  // SUBSTITUTION: { outPlayerId, outName, inPlayerId, inName, positionId, positionName }
-  // GOAL/OWN_GOAL: { playerId, name, xg }
-  // CARD: { playerId, name, cardType }
-  payload   String
-
-  @@index([matchId, minute, second])
-}
-
-// Precomputed "who was on the pitch, in what formation" for a team at a point
-// in time, one row per STARTING_XI / TACTICAL_SHIFT / SUBSTITUTION event.
-// Querying the latest row with minute/second <= target gives the state at
-// any moment without replaying events at request time.
+// Chosen formation + starting XI for one team in one match, at a point in
+// time (minute 0 = kickoff selection; a later minute = an in-match
+// substitution/tactical shift the manager made). Always constructed (the
+// manager's own choice, or the auto-assigned opponent lineup) - there is
+// no real per-match lineup source anymore.
 model MatchSnapshot {
   id        String @id @default(cuid())
   matchId   Int
@@ -152,83 +143,35 @@ model MatchSnapshot {
   @@index([matchId, teamId, minute, second])
 }
 
-// Real, unfiltered ball-involved events (Pass/Carry/Shot/Duel/...) with
-// StatsBomb pitch coordinates (0-120 x 0-80). This is the ground truth used
-// to drive the ball's path in the frame simulator - never fabricated.
+// Ball-involved events (Pass/Carry/Shot/Corner/...) with pitch coordinates
+// (0-120 x 0-80). For the campaign's own matches these are persisted as
+// the AI what-if generator streams each chunk (so revisiting an
+// in-progress match, live stats, and narration all read from the same
+// rows); background matches (not involving the campaign's team) get no
+// ball events at all, only a final score.
 model MatchBallEvent {
-  id              String  @id
-  matchId         Int
-  match           Match   @relation(fields: [matchId], references: [id])
-  teamId          Int
-  type            String
-  period          Int
-  minute          Int
-  second          Int
-  duration        Float
-  playerId        Int?
-  playerName      String?
-  recipientId     Int?
-  recipientName   String?
-  x               Float
-  y               Float
-  endX            Float?
-  endY            Float?
-  outcome         String?
+  id            String  @id
+  matchId       Int
+  match         Match   @relation(fields: [matchId], references: [id])
+  teamId        Int
+  type          String
+  period        Int
+  minute        Int
+  second        Int
+  duration      Float
+  playerId      Int?
+  playerName    String?
+  recipientId   Int?
+  recipientName String?
+  x             Float
+  y             Float
+  endX          Float?
+  endY          Float?
+  outcome       String?
+  // The AI's own narration line for this moment (written live as part of
+  // the what-if generation, not a template) - null for the single
+  // synthetic kickoff anchor event, which is never shown in the log.
+  commentary    String?
 
   @@index([matchId, minute, second])
-}
-
-enum PlayerEventType {
-  HOME    // holding formation shape, negligible movement
-  SUPPORT // teammate of the ball-possessing team shifting toward the ball
-  PRESS   // opponent closing down the ball
-}
-
-// Discrete, per-player movement segments - one per player per real
-// MatchBallEvent, mirroring how the ball itself moves from event to event.
-// fromX/Y -> toX/Y is NOT real tracking data (see MatchFrame doc below);
-// it is a constructed/dummy movement decision computed from the team-shape
-// heuristic, persisted as an inspectable event rather than a bare formula
-// so the same representation can later be produced by the AI what-if
-// generator (real events and AI-generated events both become rows here).
-model MatchPlayerEvent {
-  id                 String          @id @default(cuid())
-  matchId            Int
-  match              Match           @relation(fields: [matchId], references: [id])
-  playerId           Int
-  teamId             Int
-  type               PlayerEventType
-  t                  Float
-  endT               Float
-  fromX              Float
-  fromY              Float
-  toX                Float
-  toY                Float
-  triggerBallEventId String?
-
-  @@index([matchId, playerId, t])
-}
-
-// Simulated per-second game state for match replay/what-if playback,
-// derived by interpolating MatchBallEvent (ball) and MatchPlayerEvent
-// (players) at each second. The 21 off-ball players' positions are NOT
-// real tracking data - see MatchPlayerEvent doc. Frontend plays these
-// back as keyframes with CSS-transition interpolation between them.
-model MatchFrame {
-  id      String @id @default(cuid())
-  matchId Int
-  match   Match  @relation(fields: [matchId], references: [id])
-  // Continuous seconds since kickoff (see src/lib/match-clock.ts) - the
-  // authoritative ordering key, since raw minute/second overlaps at
-  // period boundaries.
-  t       Float
-  period  Int
-  minute  Int
-  second  Int
-  ballX   Float
-  ballY   Float
-  // JSON array of 22 { playerId, teamId, x, y }
-  players String
-
-  @@index([matchId, t])
 }

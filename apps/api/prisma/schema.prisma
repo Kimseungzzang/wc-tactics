@@ -19,6 +19,11 @@ model Team {
   // the group-draw algorithm's "no two same-confederation teams per group"
   // constraint (UEFA exempted, 1-2 per group).
   confederation  String
+  // Real FIFA Men's World Ranking position around the team's pot
+  // assignment (lower = better) - see scripts/team-pot-data.ts. Finer-
+  // grained than `pot`, so it can still separate two same-pot teams that
+  // meet in a knockout round (buildStrengthMap in campaigns.service.ts).
+  fifaRank       Int
 
   homeMatches     Match[]              @relation("HomeTeam")
   awayMatches     Match[]              @relation("AwayTeam")
@@ -129,16 +134,21 @@ model Match {
 // manager's own choice, or the auto-assigned opponent lineup) - there is
 // no real per-match lineup source anymore.
 model MatchSnapshot {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   matchId   Int
-  match     Match  @relation(fields: [matchId], references: [id])
+  match     Match    @relation(fields: [matchId], references: [id])
   teamId    Int
-  team      Team   @relation(fields: [teamId], references: [id])
+  team      Team     @relation(fields: [teamId], references: [id])
   minute    Int
   second    Int
   formation String
   // JSON array of 11 { playerId, name, jerseyNumber, positionId, positionName }
   lineup    String
+  // Real wall-clock creation time (not match-clock minute/second) - lets
+  // campaigns.service.ts's getPreviousLineup find "the kickoff lineup the
+  // manager most recently submitted across this campaign" even though
+  // matches don't carry a real calendar date to sort by otherwise.
+  createdAt DateTime @default(now())
 
   @@index([matchId, teamId, minute, second])
 }

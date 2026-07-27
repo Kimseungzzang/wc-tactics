@@ -6,7 +6,7 @@ import { POSITION_COORDINATES } from '../positions/position-coordinates';
  * way a chosen/auto-assigned starting XI gets positioned. Mirrors the
  * formation list SquadPanel offers the user.
  */
-const FORMATION_POSITION_IDS: Record<string, number[]> = {
+export const FORMATION_POSITION_IDS: Record<string, number[]> = {
   '4-3-3': [1, 2, 3, 5, 6, 10, 13, 15, 17, 23, 21],
   '4-4-2': [1, 2, 3, 5, 6, 12, 13, 15, 16, 22, 24],
   '4-2-3-1': [1, 2, 3, 5, 6, 9, 11, 18, 19, 20, 23],

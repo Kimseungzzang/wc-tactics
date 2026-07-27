@@ -45,6 +45,8 @@ export class MatchesService {
             outcome: true,
             minute: true,
             second: true,
+            playerId: true,
+            playerName: true,
           },
           orderBy: [{ minute: 'asc' }, { second: 'asc' }],
         }),

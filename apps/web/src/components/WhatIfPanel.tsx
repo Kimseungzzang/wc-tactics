@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { generateWhatIfStream } from '@/lib/api';
 import type { MatchDetail, MatchFrame, ProposedChange, WhatIfMoment } from '@/lib/types';
 
@@ -65,17 +65,21 @@ export function WhatIfPanel({
           moments: [...allMoments],
           error: null,
         });
-        if (chunk.frames.length > 0 || chunk.done) {
-          onChunk({
-            summary: chunk.summary,
-            moments: chunk.moments,
-            frames: chunk.frames,
-            rollbackMinute: minute,
-            isFirst,
-            done: chunk.done,
-          });
-          isFirst = false;
-        }
+        // Every chunk gets forwarded to the parent now, not just ones
+        // carrying pitch "frames" - that gate was a leftover from when
+        // frames mattered for the (since-removed) pitch visualization,
+        // and left it firing only on the final chunk, which passed just
+        // that chunk's own moments and silently dropped everything
+        // accumulated before it.
+        onChunk({
+          summary: chunk.summary,
+          moments: chunk.moments,
+          frames: chunk.frames,
+          rollbackMinute: minute,
+          isFirst,
+          done: chunk.done,
+        });
+        isFirst = false;
       });
     } catch (err) {
       setState({
@@ -86,6 +90,18 @@ export function WhatIfPanel({
       });
     }
   };
+
+  // A fresh campaign match has nothing to show until the AI generates it -
+  // kick that off the moment this panel mounts instead of waiting for a
+  // manual click, so entering the match page goes straight into a loading
+  // state and then autoplay (see MatchBoard's waitingForFreshGeneration).
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!isFreshMatch || autoStarted.current) return;
+    autoStarted.current = true;
+    void handleGenerate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFreshMatch]);
 
   return (
     <div className="hud-card rounded-lg border border-neutral-800 bg-neutral-900 p-4">
@@ -109,7 +125,7 @@ export function WhatIfPanel({
           {state.loading
             ? 'AI 시뮬레이션 중...'
             : isFreshMatch
-              ? 'AI 시뮬레이션 시작'
+              ? '다시 생성'
               : '이후 전개 재생성'}
         </button>
       </div>

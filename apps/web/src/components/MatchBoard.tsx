@@ -14,10 +14,15 @@ import type {
 import { WhatIfPanel } from './WhatIfPanel';
 import { SquadPanel } from './SquadPanel';
 import { CommentaryFeed, type CommentaryEntry } from './CommentaryFeed';
-import { MatchStatsPanel, MomentStatsPanel } from './MatchStatsPanel';
+import { MatchStatsPanel, MomentStatsPanel, PlayerStatsTable } from './MatchStatsPanel';
 import { useMatchClock, CLOCK_SPEED_OPTIONS } from './useMatchClock';
 import { playGoalSound, playHighlightSound, vibrateGoal } from '@/lib/sound';
-import { computeBallEventStats, computeMomentStats } from '@/lib/matchStats';
+import {
+  computeBallEventStats,
+  computeMomentStats,
+  computePlayerStats,
+  momentsToLiteEvents,
+} from '@/lib/matchStats';
 
 interface MatchBoardProps {
   match: MatchDetail;
@@ -382,11 +387,29 @@ export function MatchBoard({
     away: goalsSoFar.filter((h) => h.teamId === match.awayTeam.id).length,
   };
 
+  // match.ballEvents is a one-time snapshot from when the page loaded -
+  // for a match still being generated, that's just the synthetic kickoff
+  // anchor no matter how far generation/playback has actually gotten
+  // since. Once whatIf exists, splice in its live-accumulated moments
+  // (converted to the same shape) for everything from the rollback point
+  // onward, keeping only the real pre-rollback history from the snapshot.
+  const effectiveBallEvents = useMemo(() => {
+    if (!whatIf) return match.ballEvents;
+    return [
+      ...match.ballEvents.filter((e) => e.minute < whatIf.rollbackMinute),
+      ...momentsToLiteEvents(whatIf.moments),
+    ];
+  }, [match.ballEvents, whatIf]);
+
   // Both live-recomputed off the current clock position - the stats panel
   // updates as playback advances instead of showing one fixed final total.
   const liveStats = useMemo(
-    () => computeBallEventStats(match.ballEvents, match.homeTeam.id, match.awayTeam.id, currentMinute),
-    [match.ballEvents, match.homeTeam.id, match.awayTeam.id, currentMinute],
+    () => computeBallEventStats(effectiveBallEvents, match.homeTeam.id, match.awayTeam.id, currentMinute),
+    [effectiveBallEvents, match.homeTeam.id, match.awayTeam.id, currentMinute],
+  );
+  const playerStats = useMemo(
+    () => computePlayerStats(effectiveBallEvents, currentMinute),
+    [effectiveBallEvents, currentMinute],
   );
   const momentStats = useMemo(() => {
     if (!whatIf) return null;
@@ -399,6 +422,22 @@ export function MatchBoard({
     );
   }, [whatIf, match.homeTeam.id, match.awayTeam.id, clock.t]);
 
+  // Entering a genuinely fresh match now auto-generates from kickoff (see
+  // WhatIfPanel) instead of waiting on a button press - once its first
+  // chunk lands, start playback automatically too, so the whole "enter ->
+  // wait -> watch" flow needs no clicks. Captured once on mount (not
+  // re-evaluated every render) since `isFreshMatch` itself flips false the
+  // moment `whatIf` gets its first chunk.
+  const wasFreshOnMountRef = useRef(isFreshMatch);
+  const autoPlayedRef = useRef(false);
+  useEffect(() => {
+    if (wasFreshOnMountRef.current && whatIf && !autoPlayedRef.current) {
+      autoPlayedRef.current = true;
+      clock.setPlaying(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whatIf]);
+
   return (
     <div className="grid flex-1 grid-cols-1 gap-6 p-6 lg:grid-cols-[280px_1fr_340px]">
       {showEntrance && (
@@ -410,6 +449,21 @@ export function MatchBoard({
             <p className="font-hud mt-3 text-3xl font-bold text-white sm:text-4xl">
               {match.homeTeam.name} <span className="text-[var(--hud-accent)]">VS</span>{' '}
               {match.awayTeam.name}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isFreshMatch && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/90">
+          <div className="text-center">
+            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-neutral-700 border-t-[var(--hud-accent)]" />
+            <p className="font-hud mt-5 text-sm font-bold tracking-[0.2em] text-[var(--hud-accent)] uppercase">
+              AI 경기 생성 중
+            </p>
+            <p className="mt-2 text-sm text-neutral-400">
+              {match.homeTeam.name} vs {match.awayTeam.name}의 실제 능력치·전술 성향을 근거로
+              킥오프부터 경기를 만들고 있습니다.
             </p>
           </div>
         </div>
@@ -558,6 +612,8 @@ export function MatchBoard({
             awayTeamName={match.awayTeam.name}
           />
         )}
+
+        <PlayerStatsTable players={playerStats} homeTeamId={match.homeTeam.id} />
 
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
           <h3 className="mb-2 text-sm font-semibold text-neutral-200">

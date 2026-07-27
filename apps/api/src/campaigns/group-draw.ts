@@ -19,11 +19,13 @@ const GROUP_COUNT = 12;
 export const GROUP_LETTERS = 'ABCDEFGHIJKL'.split('');
 
 // The three co-hosts' fixed group draw positions from the real December
-// 2025 draw (Mexico=A1, Canada=B1, United States=D1).
+// 2025 draw (Mexico=A1, Canada=B1, United States=D1). Keyed by Team.name,
+// which is the Korean localization (team-pot-data.ts's
+// KOREAN_TEAM_NAME_BY_CODE) - keep these two in sync.
 const HOST_GROUP_INDEX: Record<string, number> = {
-  Mexico: 0,
-  Canada: 1,
-  'United States': 3,
+  멕시코: 0,
+  캐나다: 1,
+  미국: 3,
 };
 
 export function shuffle<T>(arr: T[], rand: () => number): T[] {

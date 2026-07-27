@@ -7,6 +7,7 @@ import type {
   MatchSnapshotResponse,
   PlayerStatsResponse,
   PositionCoordinate,
+  PreviousLineup,
   RecommendTacticsRequest,
   ScheduleEntry,
   TacticsRecommendation,
@@ -156,6 +157,10 @@ export function getAllGroupStandings(campaignId: string): Promise<GroupStandings
 
 export function getCampaignSchedule(campaignId: string): Promise<ScheduleEntry[]> {
   return apiFetch<ScheduleEntry[]>(`/campaigns/${campaignId}/schedule`);
+}
+
+export function getPreviousLineup(campaignId: string): Promise<PreviousLineup | null> {
+  return apiFetch<PreviousLineup | null>(`/campaigns/${campaignId}/previous-lineup`);
 }
 
 export function getTeamRankings(teamId: number): Promise<TeamRankingRow[]> {

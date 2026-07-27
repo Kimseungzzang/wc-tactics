@@ -8,6 +8,7 @@ import {
   assignFormationLineup,
   defaultStartingXi,
   DEFAULT_MOCK_FORMATION,
+  FORMATION_POSITION_IDS,
 } from '../lib/formation-lineup';
 import {
   breakKnockoutTie,
@@ -61,6 +62,42 @@ function hashString(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return Math.abs(h);
+}
+
+/**
+ * Shuffles teamIds into consecutive pairs, retrying the whole shuffle
+ * (like group-draw.ts's drawGroups) whenever a pair would put two teams
+ * from the same original group stage group against each other again -
+ * real World Cup brackets are seeded specifically to avoid an immediate
+ * Round of 32 rematch of group-stage opponents, which a plain shuffle
+ * doesn't guarantee. Falls back to the last (unconstrained) shuffle if
+ * every attempt fails, rather than never generating a bracket at all.
+ */
+function pairAvoidingSameGroup(
+  teamIds: number[],
+  groupOf: Map<number, number>,
+  rand: () => number,
+  maxAttempts = 200,
+): [number, number][] {
+  let lastShuffled = teamIds;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const shuffled = shuffle(teamIds, rand);
+    lastShuffled = shuffled;
+    const pairs: [number, number][] = [];
+    let ok = true;
+    for (let i = 0; i < shuffled.length; i += 2) {
+      if (groupOf.get(shuffled[i]) === groupOf.get(shuffled[i + 1])) {
+        ok = false;
+        break;
+      }
+      pairs.push([shuffled[i], shuffled[i + 1]]);
+    }
+    if (ok) return pairs;
+  }
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < lastShuffled.length; i += 2)
+    pairs.push([lastShuffled[i], lastShuffled[i + 1]]);
+  return pairs;
 }
 
 function computeStandingsForGroupTeams(
@@ -628,6 +665,62 @@ export class CampaignsService {
     return { matchId: dto.matchId, formation: dto.formation };
   }
 
+  /**
+   * The manager's own most recently *submitted* (minute=0, i.e. pre-
+   * kickoff, not an in-match substitution) lineup anywhere in this
+   * campaign - used to pre-fill the lineup screen for their next match
+   * instead of starting from a blank pitch every time. Reconstructs
+   * {formation, goalkeeperPlayerId, outfieldPlayerIds} from the persisted
+   * positionId-tagged lineup by matching each player's positionId back
+   * against that formation's own slot order (FORMATION_POSITION_IDS), so
+   * the same players land in the same slots they were in last time.
+   */
+  async getPreviousLineup(campaignId: string) {
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+    });
+    if (!campaign)
+      throw new NotFoundException(`Campaign not found: id=${campaignId}`);
+
+    const snapshot = await this.prisma.matchSnapshot.findFirst({
+      where: { teamId: campaign.teamId, minute: 0, match: { campaignId } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!snapshot) return null;
+
+    const lineup = JSON.parse(snapshot.lineup) as {
+      playerId: number;
+      positionId: number;
+    }[];
+    const slotOrder = FORMATION_POSITION_IDS[snapshot.formation];
+    if (!slotOrder) return null;
+
+    const playerIdByPositionId = new Map(
+      lineup.map((p) => [p.positionId, p.playerId]),
+    );
+    const goalkeeperPlayerId = playerIdByPositionId.get(slotOrder[0]);
+    const outfieldPlayerIds = slotOrder
+      .slice(1)
+      .map((positionId) => playerIdByPositionId.get(positionId));
+    if (
+      goalkeeperPlayerId == null ||
+      outfieldPlayerIds.some((id) => id == null) ||
+      outfieldPlayerIds.length !== 10
+    ) {
+      // A stored lineup that doesn't cleanly map back onto its own
+      // formation's slots (shouldn't happen, but this is reconstructed
+      // from persisted JSON rather than type-checked at read time) - fail
+      // safe to "nothing to prefill" rather than send a broken lineup.
+      return null;
+    }
+
+    return {
+      formation: snapshot.formation,
+      goalkeeperPlayerId,
+      outfieldPlayerIds: outfieldPlayerIds as number[],
+    };
+  }
+
   private recordFromOutcomes(outcomes: Outcome[]) {
     return {
       wins: outcomes.filter((o) => o === 'WIN').length,
@@ -647,15 +740,33 @@ export class CampaignsService {
     return this.recordFromOutcomes(matches.map((m) => outcomeFor(teamId, m)));
   }
 
-  /** Team "overall" strength - the unweighted mean of every real-roster
-   * player's 6 constructed attributes - used only by the background
-   * (non-campaign-team) match score simulator. Computed once per call
-   * across all 48 teams rather than per-match; cheap enough (1248 rows)
-   * to just recompute whenever a new round needs it. */
+  /** Team "overall" strength - used only by the background (non-campaign-
+   * team) match score simulator. Computed once per call across all 48
+   * teams rather than per-match; cheap enough (1248 player rows) to just
+   * recompute whenever a new round needs it.
+   *
+   * Base is the unweighted mean of every real-roster player's 6
+   * constructed attributes - but since each player's stats are just a
+   * random draw within their position group's range (see
+   * generate-attributes.ts), averaging ~26 of them per team pulls every
+   * team toward roughly the same number regardless of how good the real
+   * national team actually is. The bonus below corrects for that with
+   * the one real signal available here - each team's actual FIFA World
+   * Ranking position around the real December 2025 draw (see
+   * team-pot-data.ts's FIFA_RANK_BY_CODE) - so e.g. Spain (rank 1) is
+   * meaningfully favoured over New Zealand (rank 86) on top of whatever
+   * the random attribute draw gave them. Deliberately rank-based rather
+   * than the coarser 4-bucket `pot`: two Pot 1 sides meeting in a
+   * knockout round would get an identical pot bonus and be told apart by
+   * attribute-draw noise alone, when their real rankings can still
+   * separate them (e.g. Brazil #5 vs Belgium #8). */
   private async buildStrengthMap(): Promise<Map<number, number>> {
-    const attrs = await this.prisma.playerAttributes.findMany({
-      include: { player: { select: { teamId: true } } },
-    });
+    const [attrs, teams] = await Promise.all([
+      this.prisma.playerAttributes.findMany({
+        include: { player: { select: { teamId: true } } },
+      }),
+      this.prisma.team.findMany({ select: { id: true, fifaRank: true } }),
+    ]);
     const sumByTeam = new Map<number, number>();
     const countByTeam = new Map<number, number>();
     for (const a of attrs) {
@@ -665,9 +776,23 @@ export class CampaignsService {
       sumByTeam.set(teamId, (sumByTeam.get(teamId) ?? 0) + total);
       countByTeam.set(teamId, (countByTeam.get(teamId) ?? 0) + 6);
     }
+    // Linear from rank 1 (+20) down to rank 90+ (-20) - 90 is a
+    // deliberate small buffer past the worst real rank in our 48 teams
+    // (86, New Zealand) so the very last team isn't clamped to the
+    // extreme.
+    const BEST_RANK = 1;
+    const WORST_RANK = 90;
+    const rankBonus = (rank: number): number => {
+      const clamped = Math.min(Math.max(rank, BEST_RANK), WORST_RANK);
+      const t = (clamped - BEST_RANK) / (WORST_RANK - BEST_RANK);
+      return 20 - t * 40;
+    };
     const strength = new Map<number, number>();
-    for (const [teamId, sum] of sumByTeam)
-      strength.set(teamId, sum / (countByTeam.get(teamId) ?? 1));
+    for (const team of teams) {
+      const attributeAvg =
+        (sumByTeam.get(team.id) ?? 0) / (countByTeam.get(team.id) ?? 1);
+      strength.set(team.id, attributeAvg + rankBonus(team.fifaRank));
+    }
     return strength;
   }
 
@@ -888,10 +1013,23 @@ export class CampaignsService {
     }
 
     const rand = seededRandom(hashString(`${campaignId}-${stage}`));
-    const shuffled = shuffle(qualifiers, rand);
-    const pairs: [number, number][] = [];
-    for (let i = 0; i < shuffled.length; i += 2)
-      pairs.push([shuffled[i], shuffled[i + 1]]);
+    let pairs: [number, number][];
+    if (stage === 'Round of 32') {
+      // Only this round risks an immediate rematch of a real group-stage
+      // opponent - every later round's pool is already a mix of teams
+      // that came from different original groups via this same pairing.
+      const groups = await this.computeGroupPartition(campaignId);
+      const groupOf = new Map<number, number>();
+      groups.forEach((teamIds, i) =>
+        teamIds.forEach((id) => groupOf.set(id, i)),
+      );
+      pairs = pairAvoidingSameGroup(qualifiers, groupOf, rand);
+    } else {
+      const shuffled = shuffle(qualifiers, rand);
+      pairs = [];
+      for (let i = 0; i < shuffled.length; i += 2)
+        pairs.push([shuffled[i], shuffled[i + 1]]);
+    }
 
     const strengthByTeam = await this.buildStrengthMap();
     const matchWeek = STAGE_ORDER.indexOf(stage) + 4;

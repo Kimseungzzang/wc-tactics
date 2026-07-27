@@ -1,5 +1,5 @@
 import type { MatchStats } from '@/lib/types';
-import type { PartialTeamStats } from '@/lib/matchStats';
+import type { PartialTeamStats, PlayerMatchStats } from '@/lib/matchStats';
 
 interface StatRow {
   label: string;
@@ -113,6 +113,61 @@ export function MomentStatsPanel({ stats, homeTeamName, awayTeamName }: MomentSt
       <p className="mt-2 text-[10px] leading-snug text-neutral-600">
         {homeTeamName} · {awayTeamName} — 개입 시점부터 지금까지 AI가 생성한 구간만 집계.
       </p>
+    </div>
+  );
+}
+
+interface PlayerStatsTableProps {
+  players: PlayerMatchStats[];
+  homeTeamId: number;
+}
+
+/** Per-player breakdown - only players who took at least one shot show up
+ * (a 0/0/0 row for every player who merely touched the ball isn't useful
+ * here), sorted by goals then shots. No assists column: the underlying
+ * events don't record who passed to whom (see computePlayerStats), so
+ * there's nothing real to count. */
+export function PlayerStatsTable({ players, homeTeamId }: PlayerStatsTableProps) {
+  const sorted = players
+    .filter((p) => p.shots > 0)
+    .sort((a, b) => b.goals - a.goals || b.shots - a.shots || b.touches - a.touches);
+  if (sorted.length === 0) return null;
+
+  return (
+    <div className="hud-card rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+      <p className="font-hud mb-2 text-[11px] font-bold tracking-[0.1em] text-neutral-500 uppercase">
+        선수 개인 기록
+      </p>
+      <div className="max-h-56 overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-[10px] text-neutral-600">
+              <th className="pb-1 font-normal">선수</th>
+              <th className="pb-1 text-center font-normal">골</th>
+              <th className="pb-1 text-center font-normal">슈팅</th>
+              <th className="pb-1 text-center font-normal">유효</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((p) => (
+              <tr key={p.playerId} className="border-t border-neutral-800/60">
+                <td className="py-1 pr-2">
+                  <span
+                    className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
+                      p.teamId === homeTeamId ? 'bg-sky-500' : 'bg-rose-500'
+                    }`}
+                  />
+                  <span className="text-neutral-200">{p.playerName}</span>
+                </td>
+                <td className="hud-score py-1 text-center text-neutral-100">{p.goals}</td>
+                <td className="py-1 text-center text-neutral-400">{p.shots}</td>
+                <td className="py-1 text-center text-neutral-400">{p.shotsOnTarget}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[10px] text-neutral-600">슈팅에 관여한 선수만 표시됩니다.</p>
     </div>
   );
 }

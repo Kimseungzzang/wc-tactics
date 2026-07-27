@@ -6,6 +6,52 @@ export interface PartialTeamStats {
   xg: number;
 }
 
+export interface PlayerMatchStats {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  goals: number;
+  shots: number;
+  shotsOnTarget: number;
+  touches: number;
+}
+
+// Mirrors what-if.service.ts's MOMENT_TYPE_TO_BALL_EVENT_TYPE exactly - a
+// WhatIfMoment's type is a phase-of-play label, not a ball-touch type, so
+// it has to be mapped onto the same touch vocabulary the backend persists
+// (and computeBallEventStats already counts by) before it can feed the
+// same stats function as real ball events.
+const MOMENT_TYPE_TO_BALL_EVENT_TYPE: Record<WhatIfMoment['type'], string> = {
+  BUILD_UP: 'Pass',
+  CHANCE: 'Carry',
+  SHOT: 'Shot',
+  TURNOVER: 'Carry',
+  CLEARANCE: 'Carry',
+};
+
+/**
+ * Converts live AI-generated moments (client-side `whatIf` state, updated
+ * per streamed chunk) into the same shape the server-persisted ball
+ * events use, so the main stats panel can read from whichever source
+ * actually has the current match's content instead of always trusting
+ * the page's initial `match.ballEvents` snapshot - which, for a match
+ * that's still being generated, never has more than the synthetic
+ * kickoff anchor no matter how far playback/generation has actually
+ * gotten (see MatchBoard's `effectiveBallEvents`).
+ */
+export function momentsToLiteEvents(moments: WhatIfMoment[]): MatchBallEventLite[] {
+  return moments.map((m, i) => ({
+    id: `live-${i}-${m.atMinute ?? 0}-${m.atSecond ?? 0}-${m.offsetSeconds}`,
+    teamId: m.teamId,
+    type: MOMENT_TYPE_TO_BALL_EVENT_TYPE[m.type],
+    outcome: m.outcome,
+    minute: m.atMinute ?? 0,
+    second: m.atSecond ?? 0,
+    playerId: m.playerId,
+    playerName: m.playerName,
+  }));
+}
+
 function hashString(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
@@ -115,4 +161,45 @@ export function computeMomentStats(
     };
   };
   return { home: statsFor(homeTeamId), away: statsFor(awayTeamId) };
+}
+
+/**
+ * Per-player breakdown, counted the same way as the team panel above -
+ * goals/shots/shots-on-target from Shot events, touches from every event
+ * the player was directly involved in. No assist tracking: a WhatIfMoment
+ * only records who acted, not who they passed to (recipientId is always
+ * null on AI-generated events), so an assist figure would have nothing
+ * real to count from.
+ */
+export function computePlayerStats(
+  events: MatchBallEventLite[],
+  upToMinute?: number,
+): PlayerMatchStats[] {
+  const visible =
+    upToMinute == null ? events : events.filter((e) => e.minute <= upToMinute);
+
+  const byPlayer = new Map<number, PlayerMatchStats>();
+  for (const e of visible) {
+    if (e.playerId == null || e.playerName == null) continue;
+    let stats = byPlayer.get(e.playerId);
+    if (!stats) {
+      stats = {
+        playerId: e.playerId,
+        playerName: e.playerName,
+        teamId: e.teamId,
+        goals: 0,
+        shots: 0,
+        shotsOnTarget: 0,
+        touches: 0,
+      };
+      byPlayer.set(e.playerId, stats);
+    }
+    stats.touches += 1;
+    if (e.type === 'Shot') {
+      stats.shots += 1;
+      if (e.outcome === 'Goal' || e.outcome === 'Saved') stats.shotsOnTarget += 1;
+      if (e.outcome === 'Goal') stats.goals += 1;
+    }
+  }
+  return [...byPlayer.values()];
 }

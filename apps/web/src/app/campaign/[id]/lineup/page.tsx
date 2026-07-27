@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getCampaign, getMatchDetail } from '@/lib/api';
+import { getCampaign, getMatchDetail, getPreviousLineup } from '@/lib/api';
 import { LineupSelect } from '@/components/LineupSelect';
 
 export default async function LineupPage({
@@ -11,8 +11,11 @@ export default async function LineupPage({
 }) {
   const { id } = await params;
   const { matchId } = await searchParams;
-  const campaign = await getCampaign(id);
-  const match = await getMatchDetail(Number(matchId));
+  const [campaign, match, previousLineup] = await Promise.all([
+    getCampaign(id),
+    getMatchDetail(Number(matchId)),
+    getPreviousLineup(id),
+  ]);
 
   const squad = match.squads[campaign.teamId] ?? [];
   const isHome = campaign.teamId === match.homeTeam.id;
@@ -43,6 +46,7 @@ export default async function LineupPage({
           matchId={match.id}
           squad={squad}
           tacticalBaseline={tacticalBaseline}
+          previousLineup={previousLineup}
         />
       </main>
     </div>

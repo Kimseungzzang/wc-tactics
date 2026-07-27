@@ -10,6 +10,15 @@ export interface SquadEntry {
   position: string;
 }
 
+/** The manager's own most recently submitted starting XI anywhere in this
+ * campaign, if any - used to pre-fill the lineup screen for their next
+ * match instead of starting from a blank pitch every time. */
+export interface PreviousLineup {
+  formation: string;
+  goalkeeperPlayerId: number;
+  outfieldPlayerIds: number[];
+}
+
 /** 0-100 dials, 50 = neutral baseline. Mirrors the backend TeamTacticalProfile
  * / TacticalDial shape - see team-shape-simulator.ts on the API side for
  * what each value actually does to player positioning and pressing. */
@@ -45,6 +54,8 @@ export interface MatchBallEventLite {
   outcome: string | null;
   minute: number;
   second: number;
+  playerId: number | null;
+  playerName: string | null;
 }
 
 /** A narrated moment from the match's AI-generated ball-event stream - the

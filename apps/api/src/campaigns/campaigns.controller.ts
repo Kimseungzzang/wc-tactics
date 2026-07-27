@@ -45,6 +45,11 @@ export class CampaignsController {
     return this.service.getSchedule(id);
   }
 
+  @Get(':id/previous-lineup')
+  getPreviousLineup(@Param('id') id: string) {
+    return this.service.getPreviousLineup(id);
+  }
+
   @Post(':id/results')
   recordResult(@Param('id') id: string, @Body() dto: RecordResultDto) {
     return this.service.recordResult(id, dto);

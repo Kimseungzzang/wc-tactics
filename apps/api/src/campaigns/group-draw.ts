@@ -191,6 +191,61 @@ export function breakKnockoutTie(
   return rand() < 0.5 ? [homeScore + 1, awayScore] : [homeScore, awayScore + 1];
 }
 
+export interface GoalScorerCandidate {
+  playerId: number;
+  name: string;
+  position: string;
+  shooting: number;
+}
+
+// Forwards score far more than defenders in real football; goalkeepers are
+// excluded entirely (weight 0) rather than given a token near-zero chance.
+const POSITION_GOAL_WEIGHT: Record<string, number> = {
+  FW: 5,
+  MF: 2,
+  DF: 0.6,
+  GK: 0,
+};
+
+/**
+ * Weighted-random pick of which roster players scored a background match's
+ * goals - no full match is simulated, just a plausible attribution so
+ * tournament-wide awards (Golden Boot etc.) have real per-player data for
+ * every match, not only the campaign's own AI-generated ones. Weight is
+ * position group x (shooting attribute + 10), sampled independently with
+ * replacement for each goal (the same player can score more than once).
+ */
+export function pickGoalScorers(
+  roster: GoalScorerCandidate[],
+  goalCount: number,
+  rand: () => number,
+): { playerId: number; name: string }[] {
+  const pool = roster.filter(
+    (p) => (POSITION_GOAL_WEIGHT[p.position] ?? 0) > 0,
+  );
+  if (pool.length === 0 || goalCount <= 0) return [];
+
+  const weights = pool.map(
+    (p) => (POSITION_GOAL_WEIGHT[p.position] ?? 0) * (p.shooting + 10),
+  );
+  const total = weights.reduce((a, b) => a + b, 0);
+
+  const scorers: { playerId: number; name: string }[] = [];
+  for (let i = 0; i < goalCount; i++) {
+    let r = rand() * total;
+    let chosen = pool[pool.length - 1];
+    for (let j = 0; j < pool.length; j++) {
+      r -= weights[j];
+      if (r <= 0) {
+        chosen = pool[j];
+        break;
+      }
+    }
+    scorers.push({ playerId: chosen.playerId, name: chosen.name });
+  }
+  return scorers;
+}
+
 /** Deterministic PRNG (mulberry32), seeded by an integer - lets the draw
  * and background scores for a campaign be reproducible from its own id
  * derivative rather than relying on global Math.random. */

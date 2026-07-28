@@ -10,6 +10,10 @@ interface CampaignOutcomeRevealProps {
   teamName: string;
   record: { wins: number; draws: number; losses: number };
   onContinue: () => void;
+  /** Only meaningful once the campaign has no more matches of its own
+   * left to play (eliminated or champion) - omitted for 'advanced', since
+   * the tournament isn't over yet. */
+  onViewFinalStandings?: () => void;
 }
 
 /** Full-screen reveal shown right after recording a result, whenever the
@@ -24,9 +28,11 @@ export function CampaignOutcomeReveal({
   teamName,
   record,
   onContinue,
+  onViewFinalStandings,
 }: CampaignOutcomeRevealProps) {
   const isEliminated = outcome.kind === 'eliminated';
   const isChampion = outcome.kind === 'champion';
+  const showFinalStandingsCta = outcome.kind !== 'advanced' && !!onViewFinalStandings;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95">
@@ -62,13 +68,24 @@ export function CampaignOutcomeReveal({
           최종 전적 {record.wins}승 {record.draws}무 {record.losses}패
         </p>
 
-        <button
-          type="button"
-          onClick={onContinue}
-          className="hud-btn mt-8 rounded bg-[var(--hud-accent-strong)] px-8 py-3 text-sm text-white"
-        >
-          대시보드로
-        </button>
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={onContinue}
+            className="hud-btn rounded bg-[var(--hud-accent-strong)] px-8 py-3 text-sm text-white"
+          >
+            대시보드로
+          </button>
+          {showFinalStandingsCta && (
+            <button
+              type="button"
+              onClick={onViewFinalStandings}
+              className="hud-btn rounded border border-neutral-700 bg-transparent px-8 py-3 text-sm text-neutral-200"
+            >
+              전체 대회 결과 보기
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

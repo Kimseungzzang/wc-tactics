@@ -326,3 +326,51 @@ export interface ScheduleEntry {
     outcome: CampaignOutcome;
   } | null;
 }
+
+/** One row of the full 1-48 final tournament ranking, computed once the
+ * manager's own campaign has no matches left to play (eliminated or
+ * champion) - see campaigns.service.ts's getFinalStandings/
+ * simulateRestOfTournament. `stageReached` is 'Champion'/'RunnerUp' for
+ * the Final's two teams, otherwise the stage the team was eliminated at
+ * (or 'Group Stage' for a team that never left it). */
+export interface FinalStandingRow {
+  rank: number;
+  teamId: number;
+  teamName: string;
+  stageReached: string;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+}
+
+export interface TournamentAwardPlayer {
+  playerId: number;
+  name: string;
+  teamId: number;
+  teamName: string;
+  goals: number;
+}
+
+/** Constructed end-of-tournament awards (see campaigns.service.ts's
+ * getTournamentAwards doc comment for exactly how each is derived and why
+ * there's no Young Player Award - the real roster data has no birth date). */
+export interface TournamentAwards {
+  topScorers: TournamentAwardPlayer[];
+  goldenGlove: {
+    playerId: number;
+    name: string;
+    teamId: number;
+    teamName: string;
+    goalsAgainst: number;
+  } | null;
+  goldenBall: TournamentAwardPlayer | null;
+}
+
+export interface SimulateRestResponse {
+  standings: FinalStandingRow[];
+  awards: TournamentAwards;
+}

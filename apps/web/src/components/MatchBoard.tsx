@@ -522,6 +522,11 @@ export function MatchBoard({
           teamName={managedTeamName}
           record={outcomeReveal.record}
           onContinue={() => router.push(`/campaign/${campaignId}`)}
+          onViewFinalStandings={
+            outcomeReveal.outcome.kind !== 'advanced'
+              ? () => router.push(`/campaign/${campaignId}/finale`)
+              : undefined
+          }
         />
       )}
 

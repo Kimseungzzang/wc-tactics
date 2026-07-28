@@ -59,4 +59,9 @@ export class CampaignsController {
   submitLineup(@Param('id') id: string, @Body() dto: SubmitLineupDto) {
     return this.service.submitLineup(id, dto);
   }
+
+  @Post(':id/simulate-rest')
+  simulateRest(@Param('id') id: string) {
+    return this.service.simulateRestOfTournament(id);
+  }
 }

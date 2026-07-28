@@ -10,6 +10,7 @@ import type {
   PreviousLineup,
   RecommendTacticsRequest,
   ScheduleEntry,
+  SimulateRestResponse,
   TacticsRecommendation,
   TeamRankingRow,
   TeamRef,
@@ -175,6 +176,20 @@ export function recordCampaignResult(
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+/** Plays out every remaining tournament stage in the background (only
+ * valid once the campaign has no more matches of its own left to play -
+ * eliminated or champion) and returns the full 1-48 final standings plus
+ * tournament-wide player awards. Idempotent - safe to call again on page
+ * revisit, already-generated stages just no-op server-side. */
+export function simulateRestOfTournament(
+  campaignId: string,
+): Promise<SimulateRestResponse> {
+  return apiFetch<SimulateRestResponse>(
+    `/campaigns/${campaignId}/simulate-rest`,
+    { method: 'POST' },
+  );
 }
 
 export function submitCampaignLineup(

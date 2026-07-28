@@ -23,3 +23,16 @@ export const OUTCOME_LABEL: Record<CampaignOutcome, string> = {
   DRAW: '무',
   LOSS: '패',
 };
+
+/** Labels for FinalStandingRow.stageReached (see campaigns.service.ts's
+ * getFinalStandings) - 'Champion'/'RunnerUp' only apply to the Final's two
+ * teams, everything else is "eliminated at this stage". */
+export const FINAL_STAGE_LABEL: Record<string, string> = {
+  Champion: '우승',
+  RunnerUp: '준우승',
+  'Semi-finals': '4강',
+  'Quarter-finals': '8강',
+  'Round of 16': '16강',
+  'Round of 32': '32강',
+  'Group Stage': '조별리그',
+};

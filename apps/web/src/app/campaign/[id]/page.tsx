@@ -186,12 +186,20 @@ export default async function CampaignPage({
             <p className="mt-1 text-sm text-neutral-400">
               최종 전적 {campaign.record.wins}승 {campaign.record.draws}무 {campaign.record.losses}패
             </p>
-            <Link
-              href="/"
-              className="mt-4 inline-block rounded border border-neutral-700 px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-800"
-            >
-              새 커리어 시작하기
-            </Link>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                href={`/campaign/${campaign.id}/finale`}
+                className="hud-btn inline-block rounded bg-[var(--hud-accent-strong)] px-4 py-2 text-sm text-white"
+              >
+                전체 대회 결과 보기
+              </Link>
+              <Link
+                href="/"
+                className="inline-block rounded border border-neutral-700 px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-800"
+              >
+                새 커리어 시작하기
+              </Link>
+            </div>
           </section>
         )}
 

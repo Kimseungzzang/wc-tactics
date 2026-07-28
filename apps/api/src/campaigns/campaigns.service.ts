@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   BadRequestException,
   Injectable,
@@ -15,10 +16,12 @@ import {
   drawGroups,
   GROUP_LETTERS,
   groupRoundRobinFixtures,
+  pickGoalScorers,
   seededRandom,
   shuffle,
   simulateBackgroundScore,
   type DrawTeam,
+  type GoalScorerCandidate,
 } from './group-draw';
 
 // Only the "win to keep going" chain - the 3rd Place Final is a
@@ -857,19 +860,119 @@ export class CampaignsService {
     const rand = seededRandom(
       hashString(`${campaignId}-matchday-${matchWeek}`),
     );
-    await Promise.all(
-      pending.map((m) => {
-        const [homeScore, awayScore] = simulateBackgroundScore(
-          strengthByTeam.get(m.homeTeamId) ?? 50,
-          strengthByTeam.get(m.awayTeamId) ?? 50,
-          rand,
-        );
-        return this.prisma.match.update({
-          where: { id: m.id },
-          data: { played: true, homeScore, awayScore },
-        });
-      }),
+    const involvedTeamIds = [
+      ...new Set(pending.flatMap((m) => [m.homeTeamId, m.awayTeamId])),
+    ];
+    const rosterByTeam = await this.getRosterForGoals(involvedTeamIds);
+
+    // Sequential (not Promise.all) so `rand` is consumed in a fixed,
+    // reproducible order across score generation AND goal-scorer picks -
+    // matchday sizes are small (<=24 matches) so this costs nothing.
+    for (const m of pending) {
+      const [homeScore, awayScore] = simulateBackgroundScore(
+        strengthByTeam.get(m.homeTeamId) ?? 50,
+        strengthByTeam.get(m.awayTeamId) ?? 50,
+        rand,
+      );
+      await this.prisma.match.update({
+        where: { id: m.id },
+        data: { played: true, homeScore, awayScore },
+      });
+      await this.createBackgroundGoalEvents(
+        m.id,
+        m.homeTeamId,
+        m.awayTeamId,
+        homeScore,
+        awayScore,
+        rosterByTeam,
+        rand,
+      );
+    }
+  }
+
+  /** Bulk-fetches roster + shooting attribute for pickGoalScorers, grouped
+   * by team - shared by both background-match paths (group matchday sim
+   * and knockout round generation). */
+  private async getRosterForGoals(
+    teamIds: number[],
+  ): Promise<Map<number, GoalScorerCandidate[]>> {
+    const players = await this.prisma.player.findMany({
+      where: { teamId: { in: teamIds } },
+      include: { attributes: true },
+    });
+    const map = new Map<number, GoalScorerCandidate[]>();
+    for (const p of players) {
+      if (!map.has(p.teamId)) map.set(p.teamId, []);
+      map.get(p.teamId)!.push({
+        playerId: p.id,
+        name: p.name,
+        position: p.position,
+        shooting: p.attributes?.shooting ?? 50,
+      });
+    }
+    return map;
+  }
+
+  /** Picks and persists goal-scorer MatchBallEvent rows for a background
+   * (not-the-campaign's-team) match's final score - see group-draw.ts's
+   * pickGoalScorers doc comment for why/how. A no-op for a 0-0 scoreline. */
+  private async createBackgroundGoalEvents(
+    matchId: number,
+    homeTeamId: number,
+    awayTeamId: number,
+    homeScore: number,
+    awayScore: number,
+    rosterByTeam: Map<number, GoalScorerCandidate[]>,
+    rand: () => number,
+  ) {
+    const homeScorers = pickGoalScorers(
+      rosterByTeam.get(homeTeamId) ?? [],
+      homeScore,
+      rand,
     );
+    const awayScorers = pickGoalScorers(
+      rosterByTeam.get(awayTeamId) ?? [],
+      awayScore,
+      rand,
+    );
+    const events = [
+      ...this.buildGoalEvents(matchId, homeTeamId, homeScorers, rand),
+      ...this.buildGoalEvents(matchId, awayTeamId, awayScorers, rand),
+    ];
+    if (events.length > 0) {
+      await this.prisma.matchBallEvent.createMany({ data: events });
+    }
+  }
+
+  /** Constructs (does not persist) synthetic Shot/Goal MatchBallEvent rows
+   * for a background match's goal scorers - minute/second are randomized
+   * (no real match was simulated to derive them from), x/y are a fixed
+   * "near goal" placeholder since the pitch visualization was removed and
+   * nothing renders these coordinates anymore. */
+  private buildGoalEvents(
+    matchId: number,
+    teamId: number,
+    scorers: { playerId: number; name: string }[],
+    rand: () => number,
+  ) {
+    return scorers.map((s) => {
+      const minute = 1 + Math.floor(rand() * 90);
+      return {
+        id: `bg-goal-${matchId}-${randomUUID()}`,
+        matchId,
+        teamId,
+        type: 'Shot',
+        period: minute <= 45 ? 1 : 2,
+        minute,
+        second: Math.floor(rand() * 60),
+        duration: 1,
+        playerId: s.playerId,
+        playerName: s.name,
+        x: 105,
+        y: 40,
+        outcome: 'Goal',
+      };
+    });
   }
 
   /** Partitions this campaign's 72 group-stage matches back into the 12
@@ -1064,7 +1167,29 @@ export class CampaignsService {
       };
     });
 
-    await this.prisma.match.createMany({ data: rows });
+    // Individual creates (not createMany) so each row's real DB id comes
+    // back immediately - needed to attach that match's goal-scorer events
+    // below (createMany doesn't return generated ids on SQLite).
+    const created = await Promise.all(
+      rows.map((row) => this.prisma.match.create({ data: row })),
+    );
+
+    const involvedTeamIds = [
+      ...new Set(created.flatMap((m) => [m.homeTeamId, m.awayTeamId])),
+    ];
+    const rosterByTeam = await this.getRosterForGoals(involvedTeamIds);
+    for (const m of created) {
+      if (!m.played) continue; // the campaign's own match - real events come from the lineup/what-if flow instead
+      await this.createBackgroundGoalEvents(
+        m.id,
+        m.homeTeamId,
+        m.awayTeamId,
+        m.homeScore,
+        m.awayScore,
+        rosterByTeam,
+        rand,
+      );
+    }
   }
 
   /**
@@ -1123,6 +1248,265 @@ export class CampaignsService {
       stage = nextStage;
     }
   }
+
+  /**
+   * "탈락하면 나머지 경기 결과 보기" - once the manager's own campaign has
+   * no more matches to play (eliminated at any stage, or crowned
+   * champion), plays out every remaining knockout stage in the background
+   * (idempotent per stage - already-generated ones no-op) so the full
+   * 48-team final standings and tournament-wide player awards can be
+   * computed. Refuses to run early: generating later rounds off of an
+   * unplayed earlier-round match (the manager's own still-pending game)
+   * would corrupt the bracket, since winners are read straight from
+   * homeScore/awayScore.
+   */
+  async simulateRestOfTournament(campaignId: string) {
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+    });
+    if (!campaign)
+      throw new NotFoundException(`Campaign not found: id=${campaignId}`);
+
+    const { match } = await this.resolveNextMatch(campaign.teamId, campaignId);
+    if (match) {
+      throw new BadRequestException(
+        '아직 진행할 경기가 남아있어 대회 전체 결과를 미리 볼 수 없습니다',
+      );
+    }
+
+    for (const stage of STAGE_ORDER) {
+      if (stage === 'Group Stage') continue;
+      await this.ensureKnockoutRound(campaignId, stage);
+    }
+
+    return {
+      standings: await this.getFinalStandings(campaignId),
+      awards: await this.getTournamentAwards(campaignId),
+    };
+  }
+
+  /**
+   * Full 1-48 final ranking, real-World-Cup style: Champion, Runner-up,
+   * then Semi-final/Quarter-final/Round of 16/Round of 32 losers as
+   * 4/8/16/16-team bands, then every group-stage-only team. There's no
+   * simulated 3rd Place Final (see STAGE_ORDER's comment), so the two
+   * Semi-final losers share a band rather than getting distinct 3rd/4th
+   * places - broken by goal difference like every other band. Requires
+   * the Final to have been played (throws otherwise); callers that want
+   * this before the manager's own campaign is fully resolved should call
+   * simulateRestOfTournament first.
+   */
+  private async getFinalStandings(
+    campaignId: string,
+  ): Promise<FinalStandingRow[]> {
+    const [allMatches, teams] = await Promise.all([
+      this.prisma.match.findMany({ where: { campaignId, played: true } }),
+      this.prisma.team.findMany({
+        select: { id: true, name: true, fifaRank: true },
+      }),
+    ]);
+    const finalMatch = allMatches.find((m) => m.competitionStage === 'Final');
+    if (!finalMatch) {
+      throw new BadRequestException('토너먼트가 아직 끝나지 않았습니다');
+    }
+
+    interface Agg {
+      teamId: number;
+      teamName: string;
+      fifaRank: number;
+      played: number;
+      wins: number;
+      draws: number;
+      losses: number;
+      goalsFor: number;
+      goalsAgainst: number;
+    }
+    const statsByTeam = new Map<number, Agg>(
+      teams.map((t) => [
+        t.id,
+        {
+          teamId: t.id,
+          teamName: t.name,
+          fifaRank: t.fifaRank,
+          played: 0,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          goalsFor: 0,
+          goalsAgainst: 0,
+        },
+      ]),
+    );
+    for (const m of allMatches) {
+      const home = statsByTeam.get(m.homeTeamId);
+      const away = statsByTeam.get(m.awayTeamId);
+      if (!home || !away) continue;
+      home.played += 1;
+      away.played += 1;
+      home.goalsFor += m.homeScore;
+      home.goalsAgainst += m.awayScore;
+      away.goalsFor += m.awayScore;
+      away.goalsAgainst += m.homeScore;
+      if (m.homeScore > m.awayScore) {
+        home.wins += 1;
+        away.losses += 1;
+      } else if (m.homeScore < m.awayScore) {
+        away.wins += 1;
+        home.losses += 1;
+      } else {
+        home.draws += 1;
+        away.draws += 1;
+      }
+    }
+
+    // Walk knockout stages from the Final down, remembering only the
+    // FIRST (i.e. furthest/latest) stage each team is seen in - a team
+    // that reached the Final also appears in every earlier round's
+    // matches, but those earlier appearances shouldn't overwrite it.
+    const KNOCKOUT_DESC = [
+      'Final',
+      'Semi-finals',
+      'Quarter-finals',
+      'Round of 16',
+      'Round of 32',
+    ];
+    const assigned = new Map<number, { stage: string; isWinner: boolean }>();
+    for (const stage of KNOCKOUT_DESC) {
+      for (const m of allMatches.filter((x) => x.competitionStage === stage)) {
+        for (const teamId of [m.homeTeamId, m.awayTeamId]) {
+          if (assigned.has(teamId)) continue;
+          assigned.set(teamId, {
+            stage,
+            isWinner: outcomeFor(teamId, m) === 'WIN',
+          });
+        }
+      }
+    }
+
+    const bucketOf = (teamId: number): number => {
+      const info = assigned.get(teamId);
+      if (!info) return 6; // never left the group stage
+      if (info.stage === 'Final') return info.isWinner ? 0 : 1;
+      if (info.stage === 'Semi-finals') return 2;
+      if (info.stage === 'Quarter-finals') return 3;
+      if (info.stage === 'Round of 16') return 4;
+      return 5; // Round of 32
+    };
+    const STAGE_REACHED_BY_BUCKET = [
+      'Champion',
+      'RunnerUp',
+      'Semi-finals',
+      'Quarter-finals',
+      'Round of 16',
+      'Round of 32',
+      'Group Stage',
+    ];
+
+    const rows = [...statsByTeam.values()].sort((a, b) => {
+      const bucketDiff = bucketOf(a.teamId) - bucketOf(b.teamId);
+      if (bucketDiff !== 0) return bucketDiff;
+      const gdA = a.goalsFor - a.goalsAgainst;
+      const gdB = b.goalsFor - b.goalsAgainst;
+      if (gdA !== gdB) return gdB - gdA;
+      if (a.goalsFor !== b.goalsFor) return b.goalsFor - a.goalsFor;
+      return a.fifaRank - b.fifaRank;
+    });
+
+    return rows.map((r, i) => ({
+      rank: i + 1,
+      teamId: r.teamId,
+      teamName: r.teamName,
+      stageReached: STAGE_REACHED_BY_BUCKET[bucketOf(r.teamId)],
+      played: r.played,
+      wins: r.wins,
+      draws: r.draws,
+      losses: r.losses,
+      goalsFor: r.goalsFor,
+      goalsAgainst: r.goalsAgainst,
+      goalDifference: r.goalsFor - r.goalsAgainst,
+    }));
+  }
+
+  /**
+   * Constructed tournament-wide awards from the goal-scorer events
+   * persisted for every match (the campaign's own AI-generated ones and
+   * every background match's pickGoalScorers attribution alike):
+   *  - Golden/Silver/Bronze Boot: most tournament goals, ties broken by
+   *    the scorer's team's final standing.
+   *  - Golden Glove: the presumed starting goalkeeper (lowest jersey
+   *    number on the roster) of the best defensive record among teams
+   *    that reached at least the Round of 16.
+   *  - Golden Ball: the top scorer between the two Final teams (Champion
+   *    + Runner-up) - a simplification of the real award (which factors
+   *    in far more than goals), but keeps the "best player on the best
+   *    team" spirit without inventing an opaque rating system. There's no
+   *    Young Player Award - the real roster data has no birth date field.
+   */
+  private async getTournamentAwards(
+    campaignId: string,
+  ): Promise<TournamentAwards> {
+    const standings = await this.getFinalStandings(campaignId);
+    const rankByTeam = new Map(standings.map((s) => [s.teamId, s.rank]));
+    const teamNameById = new Map(standings.map((s) => [s.teamId, s.teamName]));
+
+    const matches = await this.prisma.match.findMany({
+      where: { campaignId, played: true },
+      select: { id: true },
+    });
+    const goalEvents = await this.prisma.matchBallEvent.findMany({
+      where: { matchId: { in: matches.map((m) => m.id) }, outcome: 'Goal' },
+    });
+
+    const goalsByPlayer = new Map<number, TournamentAwardPlayer>();
+    for (const e of goalEvents) {
+      if (e.playerId == null) continue;
+      const row = goalsByPlayer.get(e.playerId) ?? {
+        playerId: e.playerId,
+        name: e.playerName ?? '이름 미상',
+        teamId: e.teamId,
+        teamName: teamNameById.get(e.teamId) ?? '알 수 없는 팀',
+        goals: 0,
+      };
+      row.goals += 1;
+      goalsByPlayer.set(e.playerId, row);
+    }
+
+    const scorers = [...goalsByPlayer.values()].sort(
+      (a, b) =>
+        b.goals - a.goals ||
+        (rankByTeam.get(a.teamId) ?? 999) - (rankByTeam.get(b.teamId) ?? 999),
+    );
+    const topScorers = scorers.slice(0, 3);
+
+    const defenseCandidates = standings.filter((s) => s.rank <= 16);
+    const bestDefense = [...defenseCandidates].sort(
+      (a, b) => a.goalsAgainst - b.goalsAgainst || a.rank - b.rank,
+    )[0];
+    let goldenGlove: TournamentAwards['goldenGlove'] = null;
+    if (bestDefense) {
+      const gk = await this.prisma.player.findFirst({
+        where: { teamId: bestDefense.teamId, position: 'GK' },
+        orderBy: { jerseyNumber: 'asc' },
+      });
+      if (gk) {
+        goldenGlove = {
+          playerId: gk.id,
+          name: gk.name,
+          teamId: bestDefense.teamId,
+          teamName: bestDefense.teamName,
+          goalsAgainst: bestDefense.goalsAgainst,
+        };
+      }
+    }
+
+    const finalistTeamIds = new Set(
+      standings.filter((s) => s.rank <= 2).map((s) => s.teamId),
+    );
+    const goldenBall =
+      scorers.find((s) => finalistTeamIds.has(s.teamId)) ?? null;
+
+    return { topScorers, goldenGlove, goldenBall };
+  }
 }
 
 interface MatchRow {
@@ -1148,6 +1532,43 @@ interface SubmitLineupInput {
   formation: string;
   goalkeeperPlayerId: number;
   outfieldPlayerIds: number[];
+}
+
+export interface FinalStandingRow {
+  rank: number;
+  teamId: number;
+  teamName: string;
+  // 'Champion' | 'RunnerUp' | 'Semi-finals' | 'Quarter-finals' |
+  // 'Round of 16' | 'Round of 32' | 'Group Stage' (the stage the team was
+  // eliminated at, or 'Champion'/'RunnerUp' for the Final's two teams).
+  stageReached: string;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+}
+
+export interface TournamentAwardPlayer {
+  playerId: number;
+  name: string;
+  teamId: number;
+  teamName: string;
+  goals: number;
+}
+
+export interface TournamentAwards {
+  topScorers: TournamentAwardPlayer[];
+  goldenGlove: {
+    playerId: number;
+    name: string;
+    teamId: number;
+    teamName: string;
+    goalsAgainst: number;
+  } | null;
+  goldenBall: TournamentAwardPlayer | null;
 }
 
 export interface GroupStandingRow {

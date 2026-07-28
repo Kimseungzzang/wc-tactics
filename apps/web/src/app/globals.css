@@ -220,10 +220,29 @@ body {
   animation: tunnel-zoom-out 650ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
+/* Campaign outcome reveal (eliminated / advanced / champion, MatchBoard) */
+@keyframes outcome-pop {
+  0% { opacity: 0; transform: scale(0.8) translateY(12px); }
+  60% { opacity: 1; transform: scale(1.04) translateY(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes outcome-glow-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.15); }
+}
+.animate-outcome-pop {
+  animation: outcome-pop 700ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.animate-outcome-glow-pulse {
+  animation: outcome-glow-pulse 2.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-goal-flash-bg,
   .animate-goal-flash-pop,
-  .animate-tunnel-zoom-out {
+  .animate-tunnel-zoom-out,
+  .animate-outcome-pop,
+  .animate-outcome-glow-pulse {
     animation-duration: 0.01ms !important;
   }
 }

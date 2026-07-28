@@ -17,6 +17,8 @@ import { CommentaryFeed, type CommentaryEntry } from './CommentaryFeed';
 import { MatchStatsPanel, MomentStatsPanel, PlayerStatsTable } from './MatchStatsPanel';
 import { useMatchClock, CLOCK_SPEED_OPTIONS } from './useMatchClock';
 import { playGoalSound, playHighlightSound, vibrateGoal } from '@/lib/sound';
+import { CampaignOutcomeReveal, type CampaignOutcomeKind } from './CampaignOutcomeReveal';
+import { STAGE_LABELS } from '@/lib/campaignDisplay';
 import {
   computeBallEventStats,
   computeMomentStats,
@@ -249,11 +251,18 @@ export function MatchBoard({
     recorded: boolean;
     error: string | null;
   }>({ submitting: false, recorded: false, error: null });
+  const [outcomeReveal, setOutcomeReveal] = useState<{
+    outcome: CampaignOutcomeKind;
+    record: { wins: number; draws: number; losses: number };
+  } | null>(null);
   const [prevMatchIdForResult, setPrevMatchIdForResult] = useState(match.id);
   if (match.id !== prevMatchIdForResult) {
     setPrevMatchIdForResult(match.id);
     setResultState({ submitting: false, recorded: false, error: null });
   }
+
+  const stageLabelOf = (stage: string) =>
+    STAGE_LABELS.find(([key]) => key === stage)?.[1] ?? stage;
 
   const computeFinalScore = (): { homeScore: number; awayScore: number } => {
     const rollbackMinute = whatIf?.rollbackMinute ?? Infinity;
@@ -277,9 +286,34 @@ export function MatchBoard({
     setResultState({ submitting: true, recorded: false, error: null });
     try {
       const { homeScore, awayScore } = computeFinalScore();
-      await recordCampaignResult(campaignId, { matchId: match.id, homeScore, awayScore });
+      const updated = await recordCampaignResult(campaignId, {
+        matchId: match.id,
+        homeScore,
+        awayScore,
+      });
       setResultState({ submitting: false, recorded: true, error: null });
-      router.push(`/campaign/${campaignId}`);
+
+      // Real 2026 World Cup advancement rule (see resolveNextMatch in
+      // campaigns.service.ts): eliminated, moved into a new knockout
+      // stage, or won the Final all change the campaign's status enough
+      // to warrant the reveal screen - staying in the group stage for
+      // the next matchday doesn't, so that case just navigates straight
+      // through like before.
+      if (updated.eliminated) {
+        setOutcomeReveal({
+          outcome: { kind: 'eliminated', stageLabel: stageLabelOf(match.competitionStage) },
+          record: updated.record,
+        });
+      } else if (!updated.nextMatch) {
+        setOutcomeReveal({ outcome: { kind: 'champion' }, record: updated.record });
+      } else if (updated.nextMatch.stage !== match.competitionStage) {
+        setOutcomeReveal({
+          outcome: { kind: 'advanced', stageLabel: stageLabelOf(updated.nextMatch.stage) },
+          record: updated.record,
+        });
+      } else {
+        router.push(`/campaign/${campaignId}`);
+      }
     } catch (err) {
       setResultState({
         submitting: false,
@@ -480,6 +514,15 @@ export function MatchBoard({
             </p>
           </div>
         </div>
+      )}
+
+      {outcomeReveal && (
+        <CampaignOutcomeReveal
+          outcome={outcomeReveal.outcome}
+          teamName={managedTeamName}
+          record={outcomeReveal.record}
+          onContinue={() => router.push(`/campaign/${campaignId}`)}
+        />
       )}
 
       <SquadPanel

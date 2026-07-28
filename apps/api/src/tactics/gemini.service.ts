@@ -10,7 +10,13 @@ import { RecommendTacticsDto } from './dto/recommend-tactics.dto';
 import { TacticsRecommendation } from './tactics-recommendation.type';
 import { WhatIfScenario } from './what-if-scenario.type';
 
-const MODEL = 'gemini-2.5-flash';
+// A pinned version (previously gemini-2.5-flash) eventually gets sunset
+// out from under you - Google retired the whole 2.0 line in June 2026,
+// and 2.5-flash stopped being available to this project's key shortly
+// after. The rolling "-latest" alias always resolves to Google's current
+// GA flash model instead, trading version pinning for not silently
+// breaking every time an old model gets retired.
+const MODEL = 'gemini-flash-latest';
 const MAX_TOOL_TURNS = 6;
 
 const RECOMMEND_SYSTEM_INSTRUCTION = `당신은 2026 월드컵 경기를 분석하는 축구 전술 코치입니다.

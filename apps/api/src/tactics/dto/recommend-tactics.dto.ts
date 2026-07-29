@@ -34,6 +34,17 @@ export class TacticalDialDto {
   defensiveLine: number;
 }
 
+export class CheckpointChoiceDto {
+  @IsString()
+  kind: 'FREE_KICK' | 'PENALTY';
+
+  @IsInt()
+  playerId: number;
+
+  @IsString()
+  playerName: string;
+}
+
 export class ProposedChangeDto {
   @IsOptional()
   @IsString()
@@ -49,6 +60,14 @@ export class ProposedChangeDto {
   @ValidateNested()
   @Type(() => TacticalDialDto)
   tacticalDial?: TacticalDialDto;
+
+  // Resumes a paused free-kick checkpoint (see WhatIfCheckpoint) with the
+  // user's chosen kicker - only meaningful on the follow-up request that
+  // continues the same scenario from where it paused.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CheckpointChoiceDto)
+  checkpointChoice?: CheckpointChoiceDto;
 }
 
 export class RecommendTacticsDto {

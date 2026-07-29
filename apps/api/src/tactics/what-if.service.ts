@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { GeminiService } from './gemini.service';
@@ -9,7 +10,7 @@ import {
   type SimSnapshotPlayer,
   type TacticalDial,
 } from '../lib/team-shape-simulator';
-import type { WhatIfMoment } from './what-if-scenario.type';
+import type { WhatIfCheckpoint, WhatIfMoment } from './what-if-scenario.type';
 
 const PITCH_LENGTH = 120;
 const PITCH_WIDTH = 80;
@@ -123,6 +124,11 @@ export interface WhatIfChunk {
   moments: WhatIfMoment[];
   frames: ReturnType<typeof simulateTeamShape>['frames'];
   done: boolean;
+  /** Set when this chunk paused on a free-kick decision instead of
+   * resolving it - the stream ends here (so `done` is also true) even
+   * though the match itself isn't over; the client resumes by calling
+   * generateStream again with proposedChange.checkpointChoice set. */
+  checkpoint?: WhatIfCheckpoint | null;
 }
 
 // A WhatIfMoment's type is a phase-of-play label, not a ball-touch type -
@@ -144,7 +150,18 @@ const MOMENT_TYPE_TO_BALL_EVENT_TYPE: Record<WhatIfMoment['type'], string> = {
 // far shorter outputs) and a very long time-to-first-frame. Instead each
 // call only covers one ~8 minute chunk, and chunks are generated/streamed
 // one at a time until the real match's last recorded minute is reached.
-const MAX_CHUNKS = 12;
+//
+// The prompt deliberately tells Gemini not to force-fill a full 8 minutes
+// of moments ("실제 경기의 1/3 수준 밀도면 충분하니 억지로 채우지 말고"),
+// so real chunks routinely land well short of 480 real-game seconds
+// (observed as low as ~4-5 minutes/chunk on average) - at 12 chunks that
+// can under-run 90 minutes by a wide margin and cut the match off early
+// (the loop force-stops once chunkIndex hits MAX_CHUNKS-1 regardless of
+// curMinute). Generous headroom here is nearly free: the loop already
+// exits the moment curMinute reaches targetEndMinute, so a normally-paced
+// match never spends the extra chunks - this only matters for slow-paced
+// ones that would otherwise truncate.
+const MAX_CHUNKS = 30;
 
 @Injectable()
 export class WhatIfService {
@@ -251,8 +268,16 @@ export class WhatIfService {
 
     let curMinute = dto.minute;
     const priorSummaries: string[] = [];
+    // A resumed checkpoint's proposedChange.checkpointChoice must only
+    // steer the FIRST chunk of this call ("resolve this exact free kick
+    // next") - reusing `dto` unmodified every loop iteration would keep
+    // re-injecting that instruction into every later chunk too, making
+    // Gemini repeat the same player's free kick over and over instead of
+    // moving the match on.
+    let effectiveProposedChange = dto.proposedChange;
 
     for (let chunkIndex = 0; chunkIndex < MAX_CHUNKS; chunkIndex++) {
+      const chunkDto = { ...dto, minute: curMinute, proposedChange: effectiveProposedChange };
       // Gemini occasionally returns an empty moment list for no real reason
       // (not a genuine "match is effectively over" signal - we're nowhere
       // near targetEndMinute when it happens) - retry a couple of times
@@ -261,7 +286,7 @@ export class WhatIfService {
       let scenario = await this.gemini.generateWhatIfScenario(
         matchId,
         opponentTeamId,
-        { ...dto, minute: curMinute },
+        chunkDto,
         priorSummaries,
       );
       let retries = 0;
@@ -270,9 +295,12 @@ export class WhatIfService {
         scenario = await this.gemini.generateWhatIfScenario(
           matchId,
           opponentTeamId,
-          { ...dto, minute: curMinute },
+          chunkDto,
           priorSummaries,
         );
+      }
+      if (effectiveProposedChange?.checkpointChoice) {
+        effectiveProposedChange = { ...effectiveProposedChange, checkpointChoice: undefined };
       }
 
       const ballEvents = momentsToBallEvents(
@@ -318,11 +346,17 @@ export class WhatIfService {
       // detail() (live stats panel, narrated log) reflects exactly what's
       // been generated so far, and re-opening an in-progress match picks
       // up where it left off instead of losing everything already played.
+      // Ids use a random suffix (not just chunkIndex/i) because chunkIndex
+      // resets to 0 on every fresh generateStream() call - a checkpoint
+      // resume (or any rollback whose target minute doesn't retroactively
+      // cover an earlier, still-persisted call's low chunk indices) would
+      // otherwise regenerate an id an earlier call already used and hit
+      // MatchBallEvent's unique constraint.
       await this.prisma.matchBallEvent.createMany({
         data: resolvedMoments.map((m, i) => {
           const be = ballEvents[i];
           return {
-            id: `whatif-${matchId}-${chunkIndex}-${i}`,
+            id: `whatif-${matchId}-${chunkIndex}-${i}-${randomUUID()}`,
             matchId,
             teamId: m.teamId,
             type: MOMENT_TYPE_TO_BALL_EVENT_TYPE[m.type],
@@ -348,6 +382,27 @@ export class WhatIfService {
       curX = lastEvent.endX ?? lastEvent.x;
       curY = lastEvent.endY ?? lastEvent.y;
       priorSummaries.push(scenario.summary);
+
+      // A free-kick checkpoint pauses the whole stream here (not just this
+      // chunk) - resuming with a chosen kicker is a fresh generateStream
+      // call (with proposedChange.checkpointChoice set), not another loop
+      // iteration, so this has to return rather than keep going. Only
+      // trusted for the manager's own team (dto.teamId) - the prompt
+      // already says not to pause for the opponent's set pieces (the user
+      // has no business picking an opponent player), but that's a natural-
+      // language instruction, not an enforced constraint, so a checkpoint
+      // for any other team is just discarded here rather than surfaced.
+      if (scenario.checkpoint && scenario.checkpoint.teamId === dto.teamId) {
+        yield {
+          chunkIndex,
+          summary: scenario.summary,
+          moments: resolvedMoments,
+          frames,
+          done: true,
+          checkpoint: { ...scenario.checkpoint, atMinute: curMinute, atSecond: lastEvent.second },
+        };
+        return;
+      }
 
       const reachedEnd =
         curMinute >= targetEndMinute || chunkIndex === MAX_CHUNKS - 1;

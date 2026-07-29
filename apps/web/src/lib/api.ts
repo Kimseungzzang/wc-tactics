@@ -25,11 +25,15 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
     cache: 'no-store',
   });
+  const text = await res.text();
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API error ${res.status} on ${path}: ${body}`);
+    throw new Error(`API error ${res.status} on ${path}: ${text}`);
   }
-  return res.json() as Promise<T>;
+  // NestJS sends a truly empty body (not the literal "null") for a handler
+  // that resolves to null - happens on every brand-new campaign's first
+  // match, since getPreviousLineup has nothing to return yet. `res.json()`
+  // would throw "Unexpected end of JSON input" on that empty body.
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 export function getTeams(): Promise<TeamRef[]> {

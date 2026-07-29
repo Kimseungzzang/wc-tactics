@@ -28,7 +28,24 @@ export interface WhatIfMoment {
   atSecond?: number;
 }
 
+/**
+ * A generated chunk can pause on a direct free-kick chance instead of
+ * resolving it itself - the model fills moments up to and including the
+ * foul, then stops and describes the decision instead of inventing who
+ * takes it. WhatIfService halts the chunk loop when this is present (see
+ * its doc comment) until the client resumes with a chosen kicker.
+ */
+export interface WhatIfCheckpoint {
+  kind: 'FREE_KICK' | 'PENALTY';
+  teamId: number;
+  description: string;
+  eligiblePlayers: { playerId: number; name: string }[];
+  atMinute: number;
+  atSecond: number;
+}
+
 export interface WhatIfScenario {
   summary: string;
   moments: WhatIfMoment[];
+  checkpoint?: WhatIfCheckpoint | null;
 }

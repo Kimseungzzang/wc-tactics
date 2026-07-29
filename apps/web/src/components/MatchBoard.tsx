@@ -2,16 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getSnapshot, recommendTactics, recordCampaignResult } from '@/lib/api';
+import { generateWhatIfStream, getSnapshot, recommendTactics, recordCampaignResult } from '@/lib/api';
 import type {
   MatchDetail,
   MatchSnapshotResponse,
   SnapshotPlayer,
   TacticalProfile,
   TacticsRecommendation,
+  WhatIfCheckpoint,
   WhatIfMoment,
 } from '@/lib/types';
 import { WhatIfPanel } from './WhatIfPanel';
+import { SetPieceCheckpoint } from './SetPieceCheckpoint';
 import { SquadPanel } from './SquadPanel';
 import { CommentaryFeed, type CommentaryEntry } from './CommentaryFeed';
 import { MatchStatsPanel, MomentStatsPanel, PlayerStatsTable } from './MatchStatsPanel';
@@ -90,6 +92,16 @@ export function MatchBoard({
     rollbackMinute: number;
   } | null>(null);
   const [whatIfStreaming, setWhatIfStreaming] = useState(false);
+  // A free-kick checkpoint pauses the AI stream (see WhatIfService); kept
+  // separate from `whatIf` itself so the reveal card can keep showing the
+  // ORIGINAL checkpoint while the resume call is in flight and after its
+  // first (resolving) moment arrives, instead of disappearing the instant
+  // new data comes back (that new chunk's own `checkpoint` is always null
+  // per the prompt's "don't make a new one this turn" rule anyway).
+  const [activeCheckpoint, setActiveCheckpoint] = useState<WhatIfCheckpoint | null>(null);
+  const [checkpointResolving, setCheckpointResolving] = useState(false);
+  const [checkpointResolvedMoment, setCheckpointResolvedMoment] = useState<WhatIfMoment | null>(null);
+  const [checkpointError, setCheckpointError] = useState<string | null>(null);
   const [showEntrance, setShowEntrance] = useState(true);
 
   const [prevMatchId, setPrevMatchId] = useState(match.id);
@@ -242,9 +254,16 @@ export function MatchBoard({
   const isFreshMatch = match.highlights.length === 0 && !whatIf;
 
   // Campaign result recording - a match is "complete" once the clock has
-  // run to the end and nothing is still streaming in.
+  // run to the end and nothing is still streaming in (and there's no
+  // free-kick checkpoint waiting on the user - the stream having ended
+  // there doesn't mean the match itself is over).
   const matchComplete =
-    !!campaignId && hasKickoff && clock.t >= clock.lastT && !clock.playing && !(whatIf && whatIfStreaming);
+    !!campaignId &&
+    hasKickoff &&
+    clock.t >= clock.lastT &&
+    !clock.playing &&
+    !(whatIf && whatIfStreaming) &&
+    !activeCheckpoint;
 
   const [resultState, setResultState] = useState<{
     submitting: boolean;
@@ -323,6 +342,59 @@ export function MatchBoard({
     }
   };
 
+  // Resumes a paused free-kick checkpoint - a fresh generateWhatIfStream
+  // call rooted at the checkpoint's own minute (not a further rollback),
+  // with the chosen kicker threaded through proposedChange.checkpointChoice
+  // so the prompt resolves that exact free kick as the next chunk's first
+  // moment (see gemini.service.ts). Goes straight through the API client
+  // rather than WhatIfPanel, since WhatIfPanel's onChunk always treats its
+  // own first chunk as a new scenario (isFirst -> replaces whatIf.moments),
+  // and this needs to APPEND onto the paused scenario instead.
+  const handleCheckpointChoice = async (kicker: { playerId: number; name: string }) => {
+    if (!activeCheckpoint) return;
+    setCheckpointResolving(true);
+    setCheckpointError(null);
+    let capturedFirstMoment = false;
+    try {
+      await generateWhatIfStream(
+        match.id,
+        {
+          minute: activeCheckpoint.atMinute,
+          teamId: managedTeamId,
+          proposedChange: {
+            ...proposedChange,
+            checkpointChoice: {
+              kind: activeCheckpoint.kind,
+              playerId: kicker.playerId,
+              playerName: kicker.name,
+            },
+          },
+        },
+        (chunk) => {
+          if (!capturedFirstMoment && chunk.moments.length > 0) {
+            capturedFirstMoment = true;
+            setCheckpointResolvedMoment(chunk.moments[0]);
+          }
+          setWhatIf((prev) =>
+            prev ? { ...prev, summary: chunk.summary, moments: [...prev.moments, ...chunk.moments] } : prev,
+          );
+          setWhatIfStreaming(!chunk.done);
+        },
+      );
+    } catch (err) {
+      setCheckpointError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCheckpointResolving(false);
+    }
+  };
+
+  const handleCheckpointDismiss = () => {
+    setActiveCheckpoint(null);
+    setCheckpointResolvedMoment(null);
+    setCheckpointError(null);
+    clock.setPlaying(true);
+  };
+
   // Unified list of "banner-worthy" events for whichever source is active
   // right now (persisted highlights vs a live AI regeneration), each
   // resolved to a single minute:second key so crossing it can be detected
@@ -370,11 +442,13 @@ export function MatchBoard({
   // chunks of the SAME scenario - only a genuinely new scenario changes it.
   const firstBannerSourceId = bannerSource[0]?.id ?? null;
   const prevFirstBannerSourceIdRef = useRef(firstBannerSourceId);
+  const fullTimeAnnouncedRef = useRef(false);
   useEffect(() => {
     if (prevFirstBannerSourceIdRef.current === firstBannerSourceId) return;
     prevFirstBannerSourceIdRef.current = firstBannerSourceId;
     lastBannerKeyRef.current = -1;
     shownBannerIdsRef.current = new Set();
+    fullTimeAnnouncedRef.current = false;
     setCommentaryLog([]);
   }, [firstBannerSourceId]);
 
@@ -472,6 +546,32 @@ export function MatchBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [whatIf]);
 
+  // The AI is never asked to narrate a final whistle - generation just
+  // stops once the clock passes 90' (see what-if.service.ts), so without
+  // this the commentary log would abruptly end mid-broadcast with no
+  // "match over" line at all. Appended once per match/scenario as a
+  // synthetic (non-AI) entry, not fetched from bannerSource, so it
+  // doesn't need a real event key to cross - reset alongside commentaryLog
+  // whenever a rollback starts a new scenario (see the effect above).
+  useEffect(() => {
+    if (!matchComplete || fullTimeAnnouncedRef.current) return;
+    fullTimeAnnouncedRef.current = true;
+    const { homeScore, awayScore } = computeFinalScore();
+    // Timestamp is wherever playback actually stopped, not a sentinel -
+    // this is also displayed (MM'SS), not just an ordering key.
+    const stopKey = clock.current.minute * 60 + clock.current.second;
+    setCommentaryLog((prev) => [
+      ...prev,
+      {
+        id: `fulltime-${match.id}`,
+        key: stopKey,
+        icon: '🏁',
+        text: `주심이 길게 휘슬을 불며 경기 종료를 알립니다. 최종 스코어 ${match.homeTeam.name} ${homeScore} - ${awayScore} ${match.awayTeam.name}.`,
+      },
+    ].slice(-MAX_LOG_ENTRIES));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchComplete]);
+
   return (
     <div className="grid flex-1 grid-cols-1 gap-6 p-6 lg:grid-cols-[280px_1fr_340px]">
       {showEntrance && (
@@ -527,6 +627,17 @@ export function MatchBoard({
               ? () => router.push(`/campaign/${campaignId}/finale`)
               : undefined
           }
+        />
+      )}
+
+      {activeCheckpoint && (
+        <SetPieceCheckpoint
+          checkpoint={activeCheckpoint}
+          resolving={checkpointResolving}
+          resolvedMoment={checkpointResolvedMoment}
+          error={checkpointError}
+          onChoose={handleCheckpointChoice}
+          onDismiss={handleCheckpointDismiss}
         />
       )}
 
@@ -749,6 +860,14 @@ export function MatchBoard({
                     },
               );
               setWhatIfStreaming(!chunk.done);
+              // A rollback/regeneration button press always starts a fresh
+              // scenario (chunk.isFirst) - clear any leftover checkpoint
+              // state from a previous run rather than let it linger.
+              if (chunk.isFirst) {
+                setCheckpointResolvedMoment(null);
+                setCheckpointError(null);
+              }
+              if (chunk.checkpoint) setActiveCheckpoint(chunk.checkpoint);
             }}
           />
         ) : (

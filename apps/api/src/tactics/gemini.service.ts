@@ -62,10 +62,20 @@ const WHAT_IF_SYSTEM_INSTRUCTION = `당신은 2026 월드컵 경기의 "이렇�
       "progress": number,
       "commentary": "짧은 실황 한 줄"
     }
-  ]
+  ],
+  "checkpoint": {
+    "kind": "FREE_KICK" | "PENALTY",
+    "teamId": number,
+    "description": "이 상황을 설명하는 한 줄",
+    "eligiblePlayers": [ { "playerId": number, "name": string } ]
+  } | null
 }
 규칙: offsetSeconds는 이번 구간의 시작 시점(0)부터 증가하는 값이며 3~5개 정도의 moment로 이번 구간(최대 480초, 약 8분)을 채우세요 - 실제 경기의 1/3 수준 밀도면 충분하니 억지로 채우지 말고, 공수 전환·빌드업·찬스 중 실제로 의미 있는 장면만 골라 구성하세요. playerId는 반드시 get_lineup_at_minute나 get_bench_players로 확인된 실제 선수여야 합니다. TURNOVER/CLEARANCE의 teamId는 볼을 새로 소유하게 된 팀입니다. 이전 구간에서 골이 들어갔다면 그 이후 흐름(리드/추격 심리 등)을 자연스럽게 반영하세요.
-zone/progress는 실황 문구가 묘사하는 위치와 반드시 일치해야 합니다 (예: "왼쪽 측면"이라고 썼다면 zone은 반드시 "left", "페널티 박스 안"이면 progress는 85~95 사이). progress는 0(자기 진영 깊숙이)부터 100(상대 골라인)까지이며, BUILD_UP은 대략 10~40, CHANCE는 50~80, SHOT은 80~95, TURNOVER/CLEARANCE는 볼을 새로 따낸 지점(대개 20~50)을 쓰세요. 텍스트와 좌표가 어긋나면 안 됩니다. JSON 외의 다른 텍스트는 출력하지 마세요.`;
+zone/progress는 실황 문구가 묘사하는 위치와 반드시 일치해야 합니다 (예: "왼쪽 측면"이라고 썼다면 zone은 반드시 "left", "페널티 박스 안"이면 progress는 85~95 사이). progress는 0(자기 진영 깊숙이)부터 100(상대 골라인)까지이며, BUILD_UP은 대략 10~40, CHANCE는 50~80, SHOT은 80~95, TURNOVER/CLEARANCE는 볼을 새로 따낸 지점(대개 20~50)을 쓰세요. 텍스트와 좌표가 어긋나면 안 됩니다.
+체크포인트 규칙: 체크포인트는 반드시 사용자가 관리하는 teamId(analysis 대상 teamId, 위에 명시된 그 팀)가 얻은 세트피스에서만 만드세요 - 상대팀이 얻은 프리킥/페널티는 체크포인트 없이 평소처럼 키커와 결과까지 moments에 바로 만들어서 이어가세요(사용자는 상대팀 선수를 고를 이유가 없습니다). 사용자 팀이 이번 구간 중 아래 두 상황 중 하나를 얻으면, moments를 그 장면까지만 채우고(누가 어떻게 마무리했는지, 그 결과는 절대 만들지 마세요) checkpoint 필드를 채워서 반환하세요.
+- FREE_KICK: 위험한 위치(대략 progress 70 이상)에서 파울이 나 직접 프리킥 찬스가 생긴 경우
+- PENALTY: 페널티 박스 안에서 파울/핸드볼로 페널티킥이 선언된 경우
+eligiblePlayers는 get_lineup_at_minute로 확인한 그 팀 선발 중 (FREE_KICK이면 프리킥을, PENALTY면 페널티킥을) 찰 법한 선수 1~5명입니다. 체크포인트가 없는 구간이면 checkpoint는 반드시 null입니다. 한 구간에 체크포인트는 최대 1개만 만드세요. 사용자가 이미 키커를 선택해 다음 구간을 요청한 경우, 그 선택을 첫 moment(해당 프리킥/페널티킥의 결과, type은 SHOT)로 반영해 이어가세요 - 이 경우 같은 구간에서 새 체크포인트를 또 만들지 마세요. JSON 외의 다른 텍스트는 출력하지 마세요.`;
 
 @Injectable()
 export class GeminiService {
@@ -206,6 +216,14 @@ export class GeminiService {
         '이 시점에 teamId 팀에 가장 그럴듯한 다음 전개를 시뮬레이션하세요.',
       );
     }
+    if (dto.proposedChange?.checkpointChoice) {
+      const { kind, playerId, playerName } = dto.proposedChange.checkpointChoice;
+      const label = kind === 'PENALTY' ? '페널티킥' : '프리킥';
+      lines.push(
+        `직전 구간에서 만들어진 ${label} 체크포인트에 대해 사용자가 키커로 ${playerName}(playerId=${playerId})을(를) 선택했습니다. ` +
+          `이 구간의 첫 moment는 반드시 이 선수가 직접 차는 ${label}의 결과여야 합니다(type: SHOT, playerId/playerName은 위 선택 그대로). 이번 구간에서는 새 체크포인트를 만들지 마세요(checkpoint는 null).`,
+      );
+    }
     if (priorSummaries.length === 0) {
       lines.push(
         '변경 직후부터 이어지는 첫 구간의 moment 시퀀스를 만들어주세요.',
@@ -305,6 +323,7 @@ export class GeminiService {
       return {
         summary: parsed.summary ?? cleaned,
         moments: parsed.moments ?? [],
+        checkpoint: parsed.checkpoint ?? null,
       };
     } catch (err) {
       this.logger.warn(
@@ -313,6 +332,7 @@ export class GeminiService {
       return {
         summary: cleaned || 'AI 응답을 해석하지 못했습니다.',
         moments: [],
+        checkpoint: null,
       };
     }
   }

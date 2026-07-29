@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { generateWhatIfStream } from '@/lib/api';
-import type { MatchDetail, MatchFrame, ProposedChange, WhatIfMoment } from '@/lib/types';
+import type {
+  MatchDetail,
+  MatchFrame,
+  ProposedChange,
+  WhatIfCheckpoint,
+  WhatIfMoment,
+} from '@/lib/types';
 
 interface WhatIfPanelProps {
   match: MatchDetail;
@@ -24,6 +30,7 @@ interface WhatIfPanelProps {
     rollbackMinute: number;
     isFirst: boolean;
     done: boolean;
+    checkpoint?: WhatIfCheckpoint | null;
   }) => void;
 }
 
@@ -78,6 +85,7 @@ export function WhatIfPanel({
           rollbackMinute: minute,
           isFirst,
           done: chunk.done,
+          checkpoint: chunk.checkpoint,
         });
         isFirst = false;
       });

@@ -119,10 +119,20 @@ export interface ProposedSubstitution {
   inPlayerId: number;
 }
 
+/** Resumes a paused free-kick/penalty checkpoint with the user's chosen
+ * kicker - only set on the follow-up request that continues the same
+ * scenario from where WhatIfChunk.checkpoint paused it. */
+export interface CheckpointChoice {
+  kind: 'FREE_KICK' | 'PENALTY';
+  playerId: number;
+  playerName: string;
+}
+
 export interface ProposedChange {
   formation?: string;
   substitutions?: ProposedSubstitution[];
   tacticalDial?: TacticalProfile;
+  checkpointChoice?: CheckpointChoice;
 }
 
 export interface RecommendTacticsRequest {
@@ -213,12 +223,26 @@ export interface PlayerStatsResponse {
   attributes: PlayerAttributesBlock | null;
 }
 
+/** A generated chunk can pause on a direct free-kick/penalty chance
+ * instead of resolving it - see WhatIfService.generateStream on the API
+ * side. The client resumes by calling generateWhatIfStream again with
+ * proposedChange.checkpointChoice set to the picked kicker. */
+export interface WhatIfCheckpoint {
+  kind: 'FREE_KICK' | 'PENALTY';
+  teamId: number;
+  description: string;
+  eligiblePlayers: { playerId: number; name: string }[];
+  atMinute: number;
+  atSecond: number;
+}
+
 export interface WhatIfChunk {
   chunkIndex: number;
   summary: string;
   moments: WhatIfMoment[];
   frames: MatchFrame[];
   done: boolean;
+  checkpoint?: WhatIfCheckpoint | null;
   error?: string;
 }
 

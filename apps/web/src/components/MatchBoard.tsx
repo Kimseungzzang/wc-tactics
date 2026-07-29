@@ -379,6 +379,18 @@ export function MatchBoard({
             prev ? { ...prev, summary: chunk.summary, moments: [...prev.moments, ...chunk.moments] } : prev,
           );
           setWhatIfStreaming(!chunk.done);
+          // Play can immediately run into ANOTHER checkpoint before the
+          // user has even dismissed this one's reveal card - without this,
+          // that second pause was silently dropped: activeCheckpoint got
+          // cleared on dismiss with nothing new to replace it, so the
+          // stream just sat there "done" and the clock caught up to it and
+          // declared the match over (the real cause of matches ending
+          // early around 15', wherever their first/second checkpoint
+          // happened to land).
+          if (chunk.checkpoint) {
+            setActiveCheckpoint(chunk.checkpoint);
+            setCheckpointResolvedMoment(null);
+          }
         },
       );
     } catch (err) {
@@ -632,6 +644,14 @@ export function MatchBoard({
 
       {activeCheckpoint && (
         <SetPieceCheckpoint
+          // Forces a fresh component instance (fresh internal chosenKicker
+          // state) whenever a genuinely new checkpoint replaces the old one
+          // mid-resolve - otherwise the picker/suspense/reveal state
+          // machine below stays stuck showing the PREVIOUS checkpoint's
+          // "키킹 준비 중" spinner forever, since the component itself
+          // never unmounts (activeCheckpoint stays truthy across the
+          // handoff from one checkpoint to the next).
+          key={`${activeCheckpoint.kind}-${activeCheckpoint.atMinute}-${activeCheckpoint.atSecond}`}
           checkpoint={activeCheckpoint}
           resolving={checkpointResolving}
           resolvedMoment={checkpointResolvedMoment}

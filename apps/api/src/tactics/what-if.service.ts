@@ -275,9 +275,19 @@ export class WhatIfService {
     // Gemini repeat the same player's free kick over and over instead of
     // moving the match on.
     let effectiveProposedChange = dto.proposedChange;
+    // Observed in practice: right after resolving a checkpoint, Gemini
+    // tends to hand the manager's team ANOTHER foul in the very next
+    // chunk (sometimes several chunks in a row) - narratively plausible
+    // once, exhausting as a UX pattern when it repeats every ~5 real
+    // minutes. Not honoring a checkpoint for a couple of chunks right
+    // after a resume forces real match-time breathing room between them,
+    // regardless of what the model itself proposes.
+    let checkpointCooldownChunks = dto.proposedChange?.checkpointChoice ? 2 : 0;
 
     for (let chunkIndex = 0; chunkIndex < MAX_CHUNKS; chunkIndex++) {
       const chunkDto = { ...dto, minute: curMinute, proposedChange: effectiveProposedChange };
+      const checkpointEligible = checkpointCooldownChunks <= 0;
+      if (checkpointCooldownChunks > 0) checkpointCooldownChunks -= 1;
       // Gemini occasionally returns an empty moment list for no real reason
       // (not a genuine "match is effectively over" signal - we're nowhere
       // near targetEndMinute when it happens) - retry a couple of times
@@ -392,7 +402,7 @@ export class WhatIfService {
       // has no business picking an opponent player), but that's a natural-
       // language instruction, not an enforced constraint, so a checkpoint
       // for any other team is just discarded here rather than surfaced.
-      if (scenario.checkpoint && scenario.checkpoint.teamId === dto.teamId) {
+      if (scenario.checkpoint && scenario.checkpoint.teamId === dto.teamId && checkpointEligible) {
         yield {
           chunkIndex,
           summary: scenario.summary,

@@ -45,6 +45,11 @@ export class CampaignsController {
     return this.service.getSchedule(id);
   }
 
+  @Get(':id/bracket')
+  getBracket(@Param('id') id: string) {
+    return this.service.getKnockoutBracket(id);
+  }
+
   @Get(':id/previous-lineup')
   getPreviousLineup(@Param('id') id: string) {
     return this.service.getPreviousLineup(id);

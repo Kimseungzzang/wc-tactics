@@ -1,7 +1,8 @@
 import Link from 'next/link';
-import { getCampaign } from '@/lib/api';
+import { getCampaign, getCampaignBracket } from '@/lib/api';
 import type { CampaignDetail, CampaignFixture, GroupStandingRow } from '@/lib/types';
 import { OtherGroupsModal } from '@/components/OtherGroupsModal';
+import { TournamentBracket } from '@/components/TournamentBracket';
 import { STAGE_LABELS, OUTCOME_STYLE, OUTCOME_LABEL } from '@/lib/campaignDisplay';
 
 function managerRank(wins: number): { title: string; icon: string } {
@@ -57,6 +58,11 @@ function FixtureRow({ fixture, teamName }: { fixture: CampaignFixture; teamName:
       <div className="flex shrink-0 items-center gap-3">
         <span className="hud-score text-sm text-neutral-300">
           {fixture.result.myScore} - {fixture.result.opponentScore}
+          {fixture.result.penalty && (
+            <span className="ml-1 text-xs text-neutral-500">
+              (PK {fixture.result.penalty.myScore}:{fixture.result.penalty.opponentScore})
+            </span>
+          )}
         </span>
         <span
           className={`font-hud rounded px-2 py-1 text-xs font-bold ${OUTCOME_STYLE[fixture.result.outcome]}`}
@@ -129,7 +135,7 @@ export default async function CampaignPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const campaign = await getCampaign(id);
+  const [campaign, bracket] = await Promise.all([getCampaign(id), getCampaignBracket(id)]);
 
   return (
     <div className="flex-1 bg-neutral-950 text-neutral-100">
@@ -203,10 +209,12 @@ export default async function CampaignPage({
           </section>
         )}
 
-        {campaign.groupStandings && (
+        {(campaign.groupStandings || bracket.length > 0) && (
           <section className="mb-10">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold text-neutral-200">조 순위표</h2>
+              <h2 className="text-lg font-semibold text-neutral-200">
+                {bracket.length > 0 ? '토너먼트 대진표' : '조 순위표'}
+              </h2>
               <div className="flex flex-wrap gap-2">
                 <Link
                   href={`/campaign/${campaign.id}/rankings`}
@@ -223,7 +231,13 @@ export default async function CampaignPage({
                 <OtherGroupsModal campaignId={campaign.id} myTeamId={campaign.teamId} />
               </div>
             </div>
-            <GroupStandingsTable standings={campaign.groupStandings} myTeamId={campaign.teamId} />
+            {bracket.length > 0 ? (
+              <TournamentBracket stages={bracket} myTeamId={campaign.teamId} />
+            ) : (
+              campaign.groupStandings && (
+                <GroupStandingsTable standings={campaign.groupStandings} myTeamId={campaign.teamId} />
+              )
+            )}
           </section>
         )}
 

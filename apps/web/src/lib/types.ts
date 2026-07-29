@@ -254,6 +254,14 @@ export interface CampaignRecord {
   losses: number;
 }
 
+/** Only present when a knockout-stage draw was resolved by the interactive
+ * PenaltyShootout flow (see campaigns.service.ts's recordResult) - the real
+ * shootout tally, shown alongside the (already tie-broken) match score. */
+export interface PenaltyResult {
+  myScore: number;
+  opponentScore: number;
+}
+
 export interface CampaignFixture {
   matchId: number;
   opponentName: string;
@@ -263,6 +271,7 @@ export interface CampaignFixture {
     myScore: number;
     opponentScore: number;
     outcome: CampaignOutcome;
+    penalty: PenaltyResult | null;
   };
 }
 
@@ -348,6 +357,7 @@ export interface ScheduleEntry {
     myScore: number;
     opponentScore: number;
     outcome: CampaignOutcome;
+    penalty: PenaltyResult | null;
   } | null;
 }
 
@@ -397,4 +407,30 @@ export interface TournamentAwards {
 export interface SimulateRestResponse {
   standings: FinalStandingRow[];
   awards: TournamentAwards;
+}
+
+/** One knockout-stage match (see campaigns.service.ts's getKnockoutBracket) -
+ * `winnerTeamId` is null only for the manager's own not-yet-played match;
+ * every background match in a generated stage is simulated immediately, so
+ * it's always decided by the time a later stage could reference it. */
+export interface BracketMatchRow {
+  id: number;
+  matchWeek: number;
+  homeTeamId: number;
+  homeTeamName: string;
+  awayTeamId: number;
+  awayTeamName: string;
+  played: boolean;
+  homeScore: number;
+  awayScore: number;
+  homePenalty: number | null;
+  awayPenalty: number | null;
+  winnerTeamId: number | null;
+}
+
+/** One knockout stage's full set of matches, in STAGE_ORDER order - only
+ * stages ensureKnockoutRound has already generated are present. */
+export interface BracketStageBlock {
+  stage: string;
+  matches: BracketMatchRow[];
 }

@@ -2,8 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { generateWhatIfStream, getSnapshot, recommendTactics, recordCampaignResult } from '@/lib/api';
+import {
+  generateWhatIfStream,
+  getCampaignBracket,
+  getSnapshot,
+  recommendTactics,
+  recordCampaignResult,
+} from '@/lib/api';
 import type {
+  BracketMatchRow,
   MatchDetail,
   MatchSnapshotResponse,
   SnapshotPlayer,
@@ -20,6 +27,8 @@ import { MatchStatsPanel, MomentStatsPanel, PlayerStatsTable } from './MatchStat
 import { useMatchClock, CLOCK_SPEED_OPTIONS } from './useMatchClock';
 import { playGoalSound, playHighlightSound, vibrateGoal } from '@/lib/sound';
 import { CampaignOutcomeReveal, type CampaignOutcomeKind } from './CampaignOutcomeReveal';
+import { TournamentFormationReveal } from './TournamentFormationReveal';
+import { PenaltyShootout } from './PenaltyShootout';
 import { STAGE_LABELS } from '@/lib/campaignDisplay';
 import {
   computeBallEventStats,
@@ -274,6 +283,9 @@ export function MatchBoard({
     outcome: CampaignOutcomeKind;
     record: { wins: number; draws: number; losses: number };
   } | null>(null);
+  const [formationReveal, setFormationReveal] = useState<{
+    matches: BracketMatchRow[];
+  } | null>(null);
   const [prevMatchIdForResult, setPrevMatchIdForResult] = useState(match.id);
   if (match.id !== prevMatchIdForResult) {
     setPrevMatchIdForResult(match.id);
@@ -300,15 +312,20 @@ export function MatchBoard({
     return { homeScore, awayScore };
   };
 
-  const handleRecordResult = async () => {
+  const handleRecordResult = async (shootout?: { myScore: number; opponentScore: number }) => {
     if (!campaignId) return;
     setResultState({ submitting: true, recorded: false, error: null });
     try {
       const { homeScore, awayScore } = computeFinalScore();
+      const managedIsHome = managedTeamId === match.homeTeam.id;
       const updated = await recordCampaignResult(campaignId, {
         matchId: match.id,
         homeScore,
         awayScore,
+        ...(shootout && {
+          shootoutHomeScore: managedIsHome ? shootout.myScore : shootout.opponentScore,
+          shootoutAwayScore: managedIsHome ? shootout.opponentScore : shootout.myScore,
+        }),
       });
       setResultState({ submitting: false, recorded: true, error: null });
 
@@ -323,6 +340,15 @@ export function MatchBoard({
           outcome: { kind: 'eliminated', stageLabel: stageLabelOf(match.competitionStage) },
           record: updated.record,
         });
+      } else if (
+        match.competitionStage === 'Group Stage' &&
+        updated.nextMatch?.stage === 'Round of 32'
+      ) {
+        // ensureKnockoutRound('Round of 32') has already run server-side
+        // as part of recordCampaignResult's response, so the full 16-match
+        // bracket already exists - no polling/loading state needed.
+        const bracket = await getCampaignBracket(campaignId);
+        setFormationReveal({ matches: bracket[0]?.matches ?? [] });
       } else if (!updated.nextMatch) {
         setOutcomeReveal({ outcome: { kind: 'champion' }, record: updated.record });
       } else if (updated.nextMatch.stage !== match.competitionStage) {
@@ -642,6 +668,14 @@ export function MatchBoard({
         />
       )}
 
+      {formationReveal && (
+        <TournamentFormationReveal
+          myTeamId={managedTeamId}
+          matches={formationReveal.matches}
+          onContinue={() => router.push(`/campaign/${campaignId}`)}
+        />
+      )}
+
       {activeCheckpoint && (
         <SetPieceCheckpoint
           // Forces a fresh component instance (fresh internal chosenKicker
@@ -897,28 +931,53 @@ export function MatchBoard({
           </div>
         )}
 
-        {matchComplete && !resultState.recorded && (
-          <div className="rounded-lg border border-emerald-700 bg-emerald-950/30 p-4">
-            <h3 className="text-sm font-semibold text-emerald-300">경기 종료</h3>
-            <p className="mt-1 text-xs text-neutral-400">
-              {(() => {
-                const { homeScore, awayScore } = computeFinalScore();
-                return `최종 스코어 ${match.homeTeam.name} ${homeScore} - ${awayScore} ${match.awayTeam.name}`;
-              })()}
-            </p>
-            {resultState.error && (
-              <p className="mt-2 text-xs text-red-400">{resultState.error}</p>
-            )}
-            <button
-              type="button"
-              onClick={handleRecordResult}
-              disabled={resultState.submitting}
-              className="hud-btn mt-3 w-full rounded bg-[var(--hud-accent-strong)] px-3 py-2.5 text-sm text-white disabled:opacity-50"
-            >
-              {resultState.submitting ? '기록하는 중...' : '결과 기록하고 다음 경기로'}
-            </button>
-          </div>
-        )}
+        {matchComplete && !resultState.recorded && (() => {
+          const { homeScore, awayScore } = computeFinalScore();
+          const isKnockoutDraw = match.competitionStage !== 'Group Stage' && homeScore === awayScore;
+
+          if (isKnockoutDraw) {
+            const opponentSnapshot =
+              snapshot.home?.teamId === managedTeamId ? snapshot.away : snapshot.home;
+            const opponentTeamName =
+              managedTeamId === match.homeTeam.id ? match.awayTeam.name : match.homeTeam.name;
+            return (
+              <PenaltyShootout
+                myTeamName={managedTeamName}
+                opponentTeamName={opponentTeamName}
+                myLineup={managedLineup.map((p) => ({ playerId: p.playerId, name: p.name }))}
+                opponentLineup={(opponentSnapshot?.lineup ?? []).map((p) => ({
+                  playerId: p.playerId,
+                  name: p.name,
+                }))}
+                submitting={resultState.submitting}
+                error={resultState.error}
+                onComplete={(myScore, opponentScore) =>
+                  handleRecordResult({ myScore, opponentScore })
+                }
+              />
+            );
+          }
+
+          return (
+            <div className="rounded-lg border border-emerald-700 bg-emerald-950/30 p-4">
+              <h3 className="text-sm font-semibold text-emerald-300">경기 종료</h3>
+              <p className="mt-1 text-xs text-neutral-400">
+                {`최종 스코어 ${match.homeTeam.name} ${homeScore} - ${awayScore} ${match.awayTeam.name}`}
+              </p>
+              {resultState.error && (
+                <p className="mt-2 text-xs text-red-400">{resultState.error}</p>
+              )}
+              <button
+                type="button"
+                onClick={() => handleRecordResult()}
+                disabled={resultState.submitting}
+                className="hud-btn mt-3 w-full rounded bg-[var(--hud-accent-strong)] px-3 py-2.5 text-sm text-white disabled:opacity-50"
+              >
+                {resultState.submitting ? '기록하는 중...' : '결과 기록하고 다음 경기로'}
+              </button>
+            </div>
+          );
+        })()}
       </aside>
     </div>
   );

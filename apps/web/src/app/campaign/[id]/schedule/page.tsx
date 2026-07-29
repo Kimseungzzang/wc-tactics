@@ -49,6 +49,11 @@ export default async function SchedulePage({ params }: { params: Promise<{ id: s
                   <div className="flex shrink-0 items-center gap-3">
                     <span className="hud-score text-sm text-neutral-300">
                       {entry.result.myScore} - {entry.result.opponentScore}
+                      {entry.result.penalty && (
+                        <span className="ml-1 text-xs text-neutral-500">
+                          (PK {entry.result.penalty.myScore}:{entry.result.penalty.opponentScore})
+                        </span>
+                      )}
                     </span>
                     <span
                       className={`font-hud rounded px-2 py-1 text-xs font-bold ${OUTCOME_STYLE[entry.result.outcome]}`}

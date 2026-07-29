@@ -251,6 +251,13 @@ export class CampaignsService {
           myScore: isHome ? m.homeScore : m.awayScore,
           opponentScore: isHome ? m.awayScore : m.homeScore,
           outcome: outcomeFor(campaign.teamId, m),
+          penalty:
+            m.homePenalty != null && m.awayPenalty != null
+              ? {
+                  myScore: isHome ? m.homePenalty : m.awayPenalty,
+                  opponentScore: isHome ? m.awayPenalty : m.homePenalty,
+                }
+              : null,
         },
       };
     });
@@ -397,10 +404,71 @@ export class CampaignsService {
               myScore: isHome ? m.homeScore : m.awayScore,
               opponentScore: isHome ? m.awayScore : m.homeScore,
               outcome: outcomeFor(campaign.teamId, m),
+              penalty:
+                m.homePenalty != null && m.awayPenalty != null
+                  ? {
+                      myScore: isHome ? m.homePenalty : m.awayPenalty,
+                      opponentScore: isHome ? m.awayPenalty : m.homePenalty,
+                    }
+                  : null,
             }
           : null,
       };
     });
+  }
+
+  /**
+   * Every knockout-stage match generated so far (see ensureKnockoutRound),
+   * grouped by stage in STAGE_ORDER order - for the persistent tournament
+   * bracket view. Only stages that already have at least one match are
+   * included, so this naturally stops at whatever round the manager's own
+   * campaign has reached (a team eliminated in the Round of 16 never
+   * causes the Quarter-finals to be generated - see resolveNextMatch).
+   * Group Stage is deliberately excluded (that's still shown via
+   * getGroupStandings/getAllGroupStandings).
+   */
+  async getKnockoutBracket(campaignId: string): Promise<BracketStageBlock[]> {
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+    });
+    if (!campaign)
+      throw new NotFoundException(`Campaign not found: id=${campaignId}`);
+
+    const matches = await this.prisma.match.findMany({
+      where: { campaignId, competitionStage: { not: 'Group Stage' } },
+      include: { homeTeam: true, awayTeam: true },
+      orderBy: { id: 'asc' },
+    });
+
+    const byStage = new Map<string, typeof matches>();
+    for (const m of matches) {
+      if (!byStage.has(m.competitionStage)) byStage.set(m.competitionStage, []);
+      byStage.get(m.competitionStage)!.push(m);
+    }
+
+    return STAGE_ORDER.filter((stage) => byStage.has(stage)).map((stage) => ({
+      stage,
+      matches: byStage.get(stage)!.map((m) => ({
+        id: m.id,
+        matchWeek: m.matchWeek,
+        homeTeamId: m.homeTeamId,
+        homeTeamName: m.homeTeam.name,
+        awayTeamId: m.awayTeamId,
+        awayTeamName: m.awayTeam.name,
+        played: m.played,
+        homeScore: m.homeScore,
+        awayScore: m.awayScore,
+        homePenalty: m.homePenalty,
+        awayPenalty: m.awayPenalty,
+        winnerTeamId: !m.played
+          ? null
+          : m.homeScore > m.awayScore
+            ? m.homeTeamId
+            : m.awayScore > m.homeScore
+              ? m.awayTeamId
+              : null,
+      })),
+    }));
   }
 
   /**
@@ -517,17 +585,31 @@ export class CampaignsService {
     }
 
     let { homeScore, awayScore } = dto;
+    let homePenalty: number | null = null;
+    let awayPenalty: number | null = null;
     if (match.competitionStage !== 'Group Stage' && homeScore === awayScore) {
-      [homeScore, awayScore] = breakKnockoutTie(
-        homeScore,
-        awayScore,
-        Math.random,
-      );
+      if (dto.shootoutHomeScore != null && dto.shootoutAwayScore != null) {
+        homePenalty = dto.shootoutHomeScore;
+        awayPenalty = dto.shootoutAwayScore;
+        [homeScore, awayScore] =
+          homePenalty > awayPenalty
+            ? [homeScore + 1, awayScore]
+            : [homeScore, awayScore + 1];
+      } else {
+        // The frontend's PenaltyShootout flow always supplies a shootout
+        // score for a knockout draw - this is just a safety net in case it
+        // somehow didn't.
+        [homeScore, awayScore] = breakKnockoutTie(
+          homeScore,
+          awayScore,
+          Math.random,
+        );
+      }
     }
 
     await this.prisma.match.update({
       where: { id: dto.matchId },
-      data: { played: true, homeScore, awayScore },
+      data: { played: true, homeScore, awayScore, homePenalty, awayPenalty },
     });
 
     return this.getCampaign(campaignId);
@@ -1525,6 +1607,8 @@ interface RecordResultInput {
   matchId: number;
   homeScore: number;
   awayScore: number;
+  shootoutHomeScore?: number;
+  shootoutAwayScore?: number;
 }
 
 interface SubmitLineupInput {
@@ -1582,4 +1666,24 @@ export interface GroupStandingRow {
   goalsAgainst: number;
   goalDifference: number;
   points: number;
+}
+
+export interface BracketMatchRow {
+  id: number;
+  matchWeek: number;
+  homeTeamId: number;
+  homeTeamName: string;
+  awayTeamId: number;
+  awayTeamName: string;
+  played: boolean;
+  homeScore: number;
+  awayScore: number;
+  homePenalty: number | null;
+  awayPenalty: number | null;
+  winnerTeamId: number | null;
+}
+
+export interface BracketStageBlock {
+  stage: string;
+  matches: BracketMatchRow[];
 }

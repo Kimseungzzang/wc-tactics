@@ -1,4 +1,5 @@
 import type {
+  BracketStageBlock,
   CampaignDetail,
   CampaignSummary,
   FullDrawGroup,
@@ -164,6 +165,10 @@ export function getCampaignSchedule(campaignId: string): Promise<ScheduleEntry[]
   return apiFetch<ScheduleEntry[]>(`/campaigns/${campaignId}/schedule`);
 }
 
+export function getCampaignBracket(campaignId: string): Promise<BracketStageBlock[]> {
+  return apiFetch<BracketStageBlock[]>(`/campaigns/${campaignId}/bracket`);
+}
+
 export function getPreviousLineup(campaignId: string): Promise<PreviousLineup | null> {
   return apiFetch<PreviousLineup | null>(`/campaigns/${campaignId}/previous-lineup`);
 }
@@ -174,7 +179,13 @@ export function getTeamRankings(teamId: number): Promise<TeamRankingRow[]> {
 
 export function recordCampaignResult(
   campaignId: string,
-  body: { matchId: number; homeScore: number; awayScore: number },
+  body: {
+    matchId: number;
+    homeScore: number;
+    awayScore: number;
+    shootoutHomeScore?: number;
+    shootoutAwayScore?: number;
+  },
 ): Promise<CampaignDetail> {
   return apiFetch<CampaignDetail>(`/campaigns/${campaignId}/results`, {
     method: 'POST',
